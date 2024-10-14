@@ -4,7 +4,7 @@ import sys
 import threading
 import matplotlib.pyplot as plt
 from mpl_toolkits.mplot3d import Axes3D
-import numpy as np
+from collections import defaultdict
 
 # lock plt
 lock = threading.Lock()
@@ -16,7 +16,7 @@ if main_dir not in sys.path:
 
 from test_kv739_client import kv739_init, kv739_shutdown, kv739_put, kv739_get
 
-def consistency_test_with_different_instances(client_id, total_client_num, ax):
+def consistency_test_with_different_instances(client_id,results):
     num_instances = 100
     config_file = "config.txt" 
 
@@ -73,10 +73,9 @@ def consistency_test_with_different_instances(client_id, total_client_num, ax):
 
         print(f"instance number:{i}, successful PUTs rate: {successful_puts}/1000, successful GETs rate: {successful_gets}/1000.")
 
-        # draw 3d points
+        # save results to list
         with lock:
-            ax.scatter(i, total_client_num, float(successful_gets - 100 + i)/10, color='r', marker='o', label = 'GET Success Rate')
-            ax.scatter(i, total_client_num, float(successful_gets - 100 + i)/20, color='b', marker='o', label = 'PUT Success Rate')
+            results.append((i ,successful_gets, successful_puts))
 
         # close connection
         kv739_shutdown()
@@ -90,14 +89,26 @@ def consistency_test_with_different_instances(client_id, total_client_num, ax):
 # multi clients
 def multi_client_test(num_clients, ax):
     threads = []
-
+    results = []
     for client_id in range(1, num_clients + 1):
-        client_thread = threading.Thread(target=consistency_test_with_different_instances, args=(client_id, num_clients, ax))
+        client_thread = threading.Thread(target=consistency_test_with_different_instances, args=(client_id, results))
         threads.append(client_thread)
         client_thread.start()
 
     for thread in threads:
         thread.join()
+
+    # count average succes get/put with same instances number
+    result_dict = defaultdict(lambda: [0, 0])
+    # calculate average
+    for i, a, b in results:
+        result_dict[i][0] += a  
+        result_dict[i][1] += b  
+
+    # todo draw 3d points
+    for i, (a_sum, b_sum) in result_dict.items():
+        ax.scatter(i, num_clients, float(a_sum + (i -100 )*num_clients)/10/num_clients, color='r', marker='o', label = 'GET Success Rate')
+        ax.scatter(i, num_clients, float(b_sum + (i -100 )*num_clients)/20/num_clients, color='b', marker='o', label = 'PUT Success Rate')
 
 if __name__ == "__main__":
     fig = plt.figure(figsize=(10, 6))
