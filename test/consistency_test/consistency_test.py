@@ -6,6 +6,7 @@ import matplotlib.pyplot as plt
 from mpl_toolkits.mplot3d import Axes3D
 from collections import defaultdict
 
+num_instances = 100
 # lock plt
 lock = threading.Lock()
 
@@ -17,25 +18,10 @@ if main_dir not in sys.path:
 from test_kv739_client import kv739_init, kv739_shutdown, kv739_put, kv739_get
 
 def consistency_test_with_different_instances(client_id,results):
-    num_instances = 100
-    config_file = "config.txt" 
-
     # instances num + 10 every time
     for i in range(10, num_instances + 1, 10):
         # temp configuration file name, add instance information when increasing
         temp_config_file = f"configure_temp_instancenum_{i}.txt"  
-        #clear file
-        with lock:
-            with open(temp_config_file, 'w'):
-                pass
-            # read first i lines to temp_config
-            with open( config_file, 'r') as src:
-                lines = src.readlines()
-                selected_lines = lines[:i]
-                # write to temp_config  
-                with open(temp_config_file, 'a') as tgt:
-                    tgt.writelines(selected_lines)
-                    print(f"[Client {client_id}] Copied first {i} lines to {temp_config_file}.")
 
         # init connection
         if kv739_init(temp_config_file) == 0:
@@ -117,6 +103,20 @@ if __name__ == "__main__":
     ax.set_xlabel('X (Server Instances)')
     ax.set_ylabel('Y (Clients Num)')
     ax.set_zlabel('Success Rate (%)')
+    
+    config_file = "config.txt" 
+    for i in range(10, num_instances + 1, 10):
+        temp_config_file = f"configure_temp_instancenum_{i}.txt"  
+        with open(temp_config_file, 'w'):
+            pass
+        # read first i lines to temp_config
+        with open( config_file, 'r') as src:
+            lines = src.readlines()
+            selected_lines = lines[:i]
+            # write to temp_config  
+            with open(temp_config_file, 'a') as tgt:
+                tgt.writelines(selected_lines)
+
     # from 1 client to 10 clients
     for c in range(1, 11):
         multi_client_test(c ,ax)
