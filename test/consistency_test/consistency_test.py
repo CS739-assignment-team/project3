@@ -69,7 +69,7 @@ def consistency_test_with_different_instances(client_id,results):
                 successful_gets += 1
                 #print(f"[Client {client_id}] GET succeeded for key: {key}, value: {get_value.strip()}")
             else:
-                print(f"[Client {client_id}] GET failed for key: {key}, expected value: {value}")
+                print(f"in consistency happen: [Client {client_id}] GET failed for key: {key}, expected value: {value}, get value: {get_value}")
 
         print(f"instance number:{i}, successful PUTs rate: {successful_puts}/1000, successful GETs rate: {successful_gets}/1000.")
 
