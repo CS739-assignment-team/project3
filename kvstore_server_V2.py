@@ -8,7 +8,9 @@ import random
 import time
 import json
 
-HOST = socket.gethostname()
+#todo
+#HOST = socket.gethostname()
+HOST = "localhost"
 DATABASE = 'kvstore.db'
 POOL_SIZE = 32
 PEER_LIST = None
@@ -116,14 +118,15 @@ def merge_data(peer_data):
             db_pool.return_connection(conn)
 
 def gossip(peers, PORT):
-    host_name = socket.gethostname()
+    #todo
+    #host_name = socket.gethostname()
+    host_name = "localhost"
     server_address = (host_name, PORT)
-
     for peer in peers:
         if peer == server_address:
             continue
         try:
-            with socket.create_connection(peer, timeout=.05) as sock:
+            with socket.create_connection(peer, timeout=2) as sock:
                 local_data = get_versioned_data()
                 data = json.dumps({"gossip": True, "store": local_data})
                 sock.sendall(data.encode("utf-8"))
@@ -143,7 +146,7 @@ def gossip(peers, PORT):
 
 def gossip_periodically(peers, PORT):
     while True:
-        time.sleep(.05)
+        time.sleep(2)
         gossip(peers, PORT)
 
 def handle_client(conn, addr):
@@ -212,13 +215,18 @@ def handle_client(conn, addr):
 def start_server():
     parser = argparse.ArgumentParser(description="Key-Value Store Server")
     parser.add_argument("--port", help="Server port", required=True)
-    parser.add_argument("--peers", help="Comma-separated list of peer host:port")
+    parser.add_argument("--servfile", help="Filename of a text file with peer host:port list", required=True)
 
     args = parser.parse_args()
     PORT = int(args.port)
 
-    peers = [(peer.split(":")[0], int(peer.split(":")[1])) for peer in args.peers.split(",")] if args.peers else []
+    peers = []
 
+    with open(args.servfile, 'r') as f:
+        for line in f:
+            host, port = line.strip().split(":")
+            peers.append((host, int(port)))
+            
     init_db()
     threading.Thread(target=gossip_periodically, args=(peers,PORT), daemon=True).start()
 
