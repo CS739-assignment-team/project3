@@ -46,6 +46,8 @@ def kv739_init(server_name, servfile):
                 print("Failed to resolve DNS name")
                 return -1
 
+        # HOST = 'localhost'
+        # print(f"host: {HOST} port: {PORT}")
         thread_local.conn = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         thread_local.conn.connect((HOST, PORT))
         print(f"Connected to {HOST}:{PORT}")
@@ -104,7 +106,7 @@ def kv739_get(key, servfile):
         print(f"Error during GET: {e}")
         return -1
 
-def kv739_put(key, new_value, servfile):
+def kv739_put(key, new_value, old_value, servfile):
     conn = thread_local.conn
     MAX_VALUE_SIZE = 2048
 
@@ -129,9 +131,9 @@ def kv739_put(key, new_value, servfile):
         response = conn.recv(1024).decode('utf-8')
 
         if response.startswith('UPDATED'):
-            return (0, old_value, new_value) if has_old_value else 1
+            return (0, old_value) if has_old_value else 1
         elif response == "INSERTED":
-            return (1, new_value)
+            return 1
         else:
             print("Unexpected server response during PUT, reconnecting...")
             return reconnect(servfile)
