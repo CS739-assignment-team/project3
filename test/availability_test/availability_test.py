@@ -1,13 +1,14 @@
 import time
 import os
 import sys
+import subprocess
 
 # add main dir to sys.path
 main_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '../..'))
 if main_dir not in sys.path:
     sys.path.append(main_dir)
 
-from test_kv739_client import kv739_init, kv739_shutdown, kv739_put, kv739_get
+from test_kv739_client import kv739_init, kv739_shutdown, kv739_put, kv739_get, kv739_die
 
 # increase instances
 def test_increasing_instances():
@@ -35,6 +36,9 @@ def test_increasing_instances():
             line = src.readline()
             tgt.write(line)
 
+        # todo server run code
+        process = subprocess.Popen(["python3", f"test_kv739_server.py --config {temp_config_file}"])
+        # init connection   
         if kv739_init(temp_config_file) == 0:
             print(f"Successfully connected to {i} instances.")
         else:
@@ -73,6 +77,8 @@ def test_increasing_instances():
         kv739_shutdown()
         print(f"Shutdown connection to {i} instances.\n")
         
+        #close server
+        process.terminate()
         # wait
         time.sleep(0.1)
 
@@ -84,6 +90,8 @@ def test_decreasing_instances():
     config_file = "config.txt" 
     # temp configuration file name, add instance information when increasing
     temp_config_file = "configure_temp.txt"  
+    # todo server run code
+    process = subprocess.Popen(["python3", f"test_kv739_server.py --config {temp_config_file}"])
     
     # copy original config to temp config
     with open(config_file, 'r') as src:
@@ -135,16 +143,23 @@ def test_decreasing_instances():
         kv739_shutdown()
         print(f"Shutdown connection to {i} instances.\n")
 
+        # record the invalid node
+        server_name =""
         # remove last line in temp config, simulate a node failure
         with open(temp_config_file, 'r') as file:
             lines = file.readlines()
             if lines:
+                server_name = lines[-1]
                 lines = lines[:-1]
                 with open(temp_config_file, 'w') as file:
                     file.writelines(lines)
-        # 每wait
+        
+        #kill server's last instance
+        kv739_die( server_name ,0)
+        # wait
         time.sleep(0.1)
 
+    process.terminate()
 
 
 if __name__ == "__main__":

@@ -10,3 +10,6 @@ def kv739_get(key, get_value):
 
 def kv739_shutdown():
     return 0
+
+def kv739_die(server_name, clean):
+    return 0
