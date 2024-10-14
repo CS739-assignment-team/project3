@@ -87,7 +87,7 @@ from test_kv739_client import kv739_init, kv739_shutdown, kv739_put, kv739_get, 
 
 # decrese instances
 def test_decreasing_instances():
-    # 创建图形
+    # init plot
     plt.figure(figsize=(10, 6))
     plt.xlabel('Server Instances')
     plt.ylabel('Sucess Rate (%)')
@@ -149,7 +149,7 @@ def test_decreasing_instances():
         #draw graph
         instances.append(i)
         put_success_rate.append(float(successful_puts)/10)
-        get_success_rate.append(float(successful_gets)/10)
+        get_success_rate.append(float(successful_gets)/20)
 
         kv739_shutdown()
         print(f"Shutdown connection to {i} instances.\n")
@@ -173,10 +173,8 @@ def test_decreasing_instances():
     process.terminate()
     plt.plot(instances, get_success_rate, 'b-o', label="GET Success Rate")
     plt.plot(instances, put_success_rate, 'g-s', label="PUT Success Rate")
-    # 添加图例
     plt.legend()
 
-    # 保存图形到文件 (PNG格式)
     plt.savefig('output_plot.png')
     plt.show()
 

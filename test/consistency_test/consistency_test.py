@@ -2,6 +2,12 @@ import time
 import os
 import sys
 import threading
+import matplotlib.pyplot as plt
+from mpl_toolkits.mplot3d import Axes3D
+import numpy as np
+
+# lock plt
+lock = threading.Lock()
 
 # add main dir to sys.path
 main_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '../..'))
@@ -10,24 +16,22 @@ if main_dir not in sys.path:
 
 from test_kv739_client import kv739_init, kv739_shutdown, kv739_put, kv739_get
 
-def consistency_test_with_different_instances(client_id):
+def consistency_test_with_different_instances(client_id, total_client_num, ax):
     num_instances = 100
     config_file = "config.txt" 
 
     # instances num + 10 every time
     for i in range(10, num_instances + 1, 10):
         # temp configuration file name, add instance information when increasing
-        temp_config_file = f"configure_temp_client_{client_id}_{i}.txt"  
+        temp_config_file = f"configure_temp_instancenum_{i}.txt"  
         #clear file
         with open(temp_config_file, 'w'):
             pass
-        # 打开源文件 A 读取 i 行写入B，模拟接下来与i个实例连接
+        # read first i lines to temp_config
         with open( config_file, 'r') as src:
-            # 选择前i行
             lines = src.readlines()
             selected_lines = lines[:i]
 
-            # 打开目标文件 B 追加模式写入
             with open(temp_config_file, 'a') as tgt:
                 tgt.writelines(selected_lines)
                 print(f"[Client {client_id}] Copied first {i} lines to {temp_config_file}.")
@@ -68,6 +72,11 @@ def consistency_test_with_different_instances(client_id):
 
         print(f"instance number:{i}, successful PUTs rate: {successful_puts}/1000, successful GETs rate: {successful_gets}/1000.")
 
+        # draw 3d points
+        with lock:
+            ax.scatter(i, total_client_num, float(successful_gets)/10, color='r', marker='o', label = 'GET Success Rate')
+            ax.scatter(i, total_client_num, float(successful_gets)/20, color='b', marker='o', label = 'PUT Success Rate')
+
         # close connection
         kv739_shutdown()
         print(f"[Client {client_id}] Shutdown connection to {i} instances.\n")
@@ -77,19 +86,32 @@ def consistency_test_with_different_instances(client_id):
 
     return
 
-# 多线程测试，每个线程模拟一个客户端
-def multi_client_test(num_clients):
+# multi clients
+def multi_client_test(num_clients, ax):
     threads = []
 
-    # 创建并启动 num_clients 个线程，每个线程模拟一个客户端
     for client_id in range(1, num_clients + 1):
-        client_thread = threading.Thread(target=consistency_test_with_different_instances, args=(client_id,))
+        client_thread = threading.Thread(target=consistency_test_with_different_instances, args=(client_id, num_clients, ax))
         threads.append(client_thread)
         client_thread.start()
 
-    # 等待所有线程完成
     for thread in threads:
         thread.join()
 
 if __name__ == "__main__":
-    multi_client_test(7)
+    fig = plt.figure(figsize=(10, 6))
+    ax = fig.add_subplot(111, projection='3d')
+    
+    ax.set_xlabel('X (Server Instances)')
+    ax.set_ylabel('Y (Clients Num)')
+    ax.set_zlabel('Success Rate (%)')
+    # from 1 client to 10 clients
+    for c in range(1, 11):
+        multi_client_test(c ,ax)
+
+    #show graph
+    handles, labels = ax.get_legend_handles_labels()
+    unique_handles_labels = dict(zip(labels, handles))
+    ax.legend(unique_handles_labels.values(), unique_handles_labels.keys())
+    plt.savefig('output_plot.png')
+    plt.show()
