@@ -1,5 +1,11 @@
 import time
-import random
+import os
+import sys
+
+# add main dir to sys.path
+main_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '../..'))
+if main_dir not in sys.path:
+    sys.path.append(main_dir)
 
 from test_kv739_client import kv739_init, kv739_shutdown, kv739_put, kv739_get
 
