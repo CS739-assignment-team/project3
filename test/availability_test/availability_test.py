@@ -148,8 +148,8 @@ def test_decreasing_instances():
         print(f"instance number:{i}, successful PUTs rate: {successful_puts}/{1000}, successful GETs rate: {successful_gets}/{1000}.")
         #draw graph
         instances.append(i)
-        put_success_rate.append(float(successful_puts)/10)
-        get_success_rate.append(float(successful_gets)/20)
+        put_success_rate.append(float(successful_puts - 100 + i)/10)
+        get_success_rate.append(float(successful_gets - 100 + i)/20)
 
         kv739_shutdown()
         print(f"Shutdown connection to {i} instances.\n")

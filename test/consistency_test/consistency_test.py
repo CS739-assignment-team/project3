@@ -25,16 +25,17 @@ def consistency_test_with_different_instances(client_id, total_client_num, ax):
         # temp configuration file name, add instance information when increasing
         temp_config_file = f"configure_temp_instancenum_{i}.txt"  
         #clear file
-        with open(temp_config_file, 'w'):
-            pass
-        # read first i lines to temp_config
-        with open( config_file, 'r') as src:
-            lines = src.readlines()
-            selected_lines = lines[:i]
-
-            with open(temp_config_file, 'a') as tgt:
-                tgt.writelines(selected_lines)
-                print(f"[Client {client_id}] Copied first {i} lines to {temp_config_file}.")
+        with lock:
+            with open(temp_config_file, 'w'):
+                pass
+            # read first i lines to temp_config
+            with open( config_file, 'r') as src:
+                lines = src.readlines()
+                selected_lines = lines[:i]
+                # write to temp_config  
+                with open(temp_config_file, 'a') as tgt:
+                    tgt.writelines(selected_lines)
+                    print(f"[Client {client_id}] Copied first {i} lines to {temp_config_file}.")
 
         # init connection
         if kv739_init(temp_config_file) == 0:
@@ -74,8 +75,8 @@ def consistency_test_with_different_instances(client_id, total_client_num, ax):
 
         # draw 3d points
         with lock:
-            ax.scatter(i, total_client_num, float(successful_gets)/10, color='r', marker='o', label = 'GET Success Rate')
-            ax.scatter(i, total_client_num, float(successful_gets)/20, color='b', marker='o', label = 'PUT Success Rate')
+            ax.scatter(i, total_client_num, float(successful_gets - 100 + i)/10, color='r', marker='o', label = 'GET Success Rate')
+            ax.scatter(i, total_client_num, float(successful_gets - 100 + i)/20, color='b', marker='o', label = 'PUT Success Rate')
 
         # close connection
         kv739_shutdown()
