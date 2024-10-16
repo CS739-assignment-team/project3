@@ -7,13 +7,22 @@ import argparse
 import random
 import time
 import json
-
+import mmh3, pickle, os
+from utils import *
+import sys
 #todo
 #HOST = socket.gethostname()
 HOST = "localhost"
 DATABASE = 'kvstore.db'
 POOL_SIZE = 32
 PEER_LIST = None
+MAX_RETRIES = 3
+PORT = 4000
+
+global_state = {
+    'tokens': [],
+    'token_map': {}
+}
 
 class ConnectionPool:
     def __init__(self, database, pool_size):
@@ -57,7 +66,8 @@ def init_db():
         CREATE TABLE IF NOT EXISTS kvstore (
             key TEXT PRIMARY KEY,
             value TEXT,
-            version INTEGER DEFAULT 0
+            version INTEGER DEFAULT 0,
+            key_hash TEXT
         )
     ''')
     conn.commit()
@@ -69,7 +79,71 @@ def is_valid_key(key):
 def is_valid_value(value):
     return len(value) <= 2048 and all(c in string.printable for c in value)
 
+def share_data(key, value, version, node):
+    HOST,PORT = extract_server_url(node)
+    if HOST == -1:
+        return -1
+    try:
+        conn = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        conn.connect((HOST, PORT))
+        print(f"Connected to {HOST}:{PORT}")
+        
+        payload = {
+            'key': key,
+            'value': value,
+            'version': version
+        }
+        conn.sendall(f'PROPAGATE {pickle.dumps(payload)}'.encode('utf-8'))
+        response = conn.recv(1024).decode('utf-8')
+
+
+        conn.sendall(b'SHUTDOWN')
+        response = conn.recv(1024)
+        print(response.decode('utf-8'))
+            
+        conn.close()
+    except Exception as e:
+        print(f"Connection error to {node}: {e}")
+        
+def propagate_key(key, value, version, backup_nodes):
+    for node in backup_nodes:
+        threading.Thread(target=share_data, args=(key, value, version, node), daemon=True).start()
+    return 0
+
+def replicate_state(data, retry_attempt):
+    while retry_attempt < MAX_RETRIES:
+        try: 
+            with open('sw_state.pickle', 'wb') as file:  # Write binary
+                pickle.dump(data, file)  # Serializes and saves to file
+
+            os.rename('sw_state.pickle', 'state.pickle')
+
+            global_state = pickle.loads(data)  # Deserializes from file
+        except Exception:
+            retry_attempt += 1
+            print(f'couldn\'t replicate the global state attempt {retry_attempt} max retries {MAX_RETRIES}')
+    if retry_attempt == MAX_RETRIES:
+        return -1
+    return 0
+
+def die(server_name, clean):
+    if clean == 1:
+        conn = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        leader_host, leader_port = global_state['leader_address'].split(':')
+        conn.connect((leader_host, leader_port))
+        conn.sendall(f'DIE {server_name} {clean}'.encode('utf-8'))
+        response = conn.recv(1024).decode('utf-8')
+        conn.close()
+        os.remove('state.pickle')
+    sys.exit(0)
+
 def put_value(key, value):
+    key_hash = hash(key)
+    replica_nodes = find_nodes_for_key(key_hash)
+    host, port = extract_server_url(replica_nodes[0])
+    if host != HOST or port != PORT:
+        return f"RETRY_PRIMARY {pickle.dumps(replica_nodes)}"
+
     with db_lock:
         conn = db_pool.get_connection()
         try:
@@ -79,10 +153,22 @@ def put_value(key, value):
             version = row[0] + 1 if row else 1
             cursor.execute("INSERT OR REPLACE INTO kvstore (key, value, version) VALUES (?, ?, ?)", (key, value, version))
             conn.commit()
+            propagate_key(key,value,version, replica_nodes)
         finally:
             db_pool.return_connection(conn)
 
+'''
+check the hash of the key, identify who owns the key and redirect
+'''
 def get_value(key):
+    replica_nodes = find_nodes_for_key(key)
+    primary_host, primary_port = extract_server_url(replica_nodes[0])
+
+    #if current node is not primary send primary details
+    #client updates the cache 
+    if primary_host != HOST or primary_port != PORT:
+        return f"RETRY_PRIMARY {pickle.dumps(replica_nodes)}"
+    
     conn = db_pool.get_connection()
     try:
         cursor = conn.cursor()
@@ -149,6 +235,14 @@ def gossip_periodically(peers, PORT):
         time.sleep(2)
         gossip(peers, PORT)
 
+    # def _get_range_data(self, range, nodes):
+        
+    #     for i in range(len(nodes)):
+    #         server_address = self._get_server_ip(nodes[i])
+
+
+    # def _copy_range_data(self, range, source, destination):
+
 def handle_client(conn, addr):
     print(f"Connected by {addr}")
     try:
@@ -166,6 +260,12 @@ def handle_client(conn, addr):
             except json.JSONDecodeError:
                 pass
 
+            if data[0:9] == "REPLICATE":
+                replicate_state(data[10:], 0)
+                continue
+            if data[0:9] == "PROPAGATE":
+
+                continue
             command = data.split()
 
             if command[0] == "GET":

@@ -27,11 +27,12 @@ class ConsistentHash:
     token_map - virtual nodes mapped to set of physical nodes Eg: t1 -> {n1, n2, n3}
     '''
 
-    def __init__(self, nodes, num_tokens, replicas):
+    def __init__(self, nodes, num_tokens, replicas, leader_address):
         self.num_nodes = len(nodes)  
         self.num_tokens_per_node = num_tokens
         self.replicas = replicas
         self.nodes = nodes
+        self.leader_address = leader_address
 
         #setup virtual nodes 
         virtual_nodes = SortedList([])
@@ -108,7 +109,8 @@ class ConsistentHash:
             "tokens": self.tokens,
             "num_tokens_per_node": self.num_tokens_per_node,
             "replicas": self.replicas,
-            "nodes": self.nodes
+            "nodes": self.nodes,
+            "leader_address": self.leader_address
         }
         #write to temp file and rename 
         with open('sw_state.pickle', 'wb') as file:  # Write binary

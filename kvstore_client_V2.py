@@ -3,8 +3,11 @@ import re
 import argparse
 import threading
 import random
+import pickle
+from utils import extract_server_url
 
 thread_local = threading.local()
+servers_file = ''
 
 def reconnect(servfile):
     try:
@@ -33,6 +36,7 @@ def reconnect(servfile):
         return -1
 
 def kv739_init(server_name, servfile):
+    servers_file = servfile
     try:
         HOST, PORT = server_name.split(':')
         PORT = int(PORT)
@@ -78,6 +82,9 @@ def kv739_shutdown(servfile):
         print(f"Error during shutdown: {e}")
         return -1
 
+def init_random_connection():
+    reconnect(servers_file)
+
 def kv739_get(key, servfile):
     conn = thread_local.conn
     MAX_VALUE_SIZE = 2048
@@ -92,6 +99,30 @@ def kv739_get(key, servfile):
                 print("Error: Retrieved value exceeds maximum allowed size.")
                 return -1
             return (0, value)
+        elif response.startswith('RETRY_PRIMARY'):
+            value = response.split(' ', 1)[1]
+            nodes_list = pickle.loads(value)
+            for node in nodes_list:
+                host, port = extract_server_url(node)
+                try:
+                    new_conn = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                    new_conn.connect((host, port))
+                    print(f"Connected to {host}:{port}")
+                    conn.sendall(f'GET {key}'.encode('utf-8'))
+                    response = conn.recv(4096).decode('utf-8')
+
+                    if response.startswith('VALUE'):
+                        value = response.split(' ', 1)[1]
+                        if len(value) > MAX_VALUE_SIZE:
+                            print("Error: Retrieved value exceeds maximum allowed size.")
+                            return -1
+                        return (0, value)
+                    elif response == "KEY_NOT_FOUND":
+                        return 1
+
+                except Exception:
+                    print(f'couldn\'t connect to the server {host}:{port}')
+
 
         elif response == "KEY_NOT_FOUND":
             return 1
@@ -117,6 +148,11 @@ def kv739_put(key, new_value, old_value, servfile):
         if response.startswith('VALUE'):
             old_value = response.split(' ', 1)[1]
             has_old_value = True
+        elif response.startswith('RETRY_PRIMARY'):
+            server = response.split(' ', 1)[1]
+            kv739_shutdown()
+
+
         elif response == "KEY_NOT_FOUND":
             has_old_value = False
         else:
@@ -144,6 +180,18 @@ def kv739_put(key, new_value, old_value, servfile):
     except Exception as e:
         print(f"Error during PUT: {e}")
         return -1
+
+def kv739_die(server_name, clean):
+    kv739_shutdown()
+    kv739_init(server_name)
+    try:
+        conn = thread_local.conn
+        MAX_VALUE_SIZE = 2048
+        conn.sendall(f'DIE {server_name} {clean}'.encode('utf-8'))
+        response= conn.recv(4096).decode('utf-8')
+        return response
+    except Exception:
+        print(f'Failed killing server {server_name}')
 
 def main():
     parser = argparse.ArgumentParser(description="Key-Value Store Client")
