@@ -3,7 +3,6 @@ import os
 import sys
 import subprocess
 import matplotlib.pyplot as plt
-import signal
 
 config_file = "servfile.txt"
 # add main dir to sys.path
@@ -65,7 +64,7 @@ def test_decreasing_instances():
     # decrese instances number one by one and record success ratio
     for i in range(num_instances, 0, -1):
         # wait server to start
-        time.sleep(1)
+        time.sleep(3)
         print(f"Starting {i} instances...")
         
         with open(temp_config_file, 'r') as servfile:
@@ -151,9 +150,6 @@ def test_decreasing_instances():
     plt.show()
 
 if __name__ == "__main__":
-    # signal tocatch Ctrl+C (SIGINT)
-    signal.signal(signal.SIGINT, handle_keyboard_interrupt)
-
     try:
         test_decreasing_instances()
     except Exception as e:
