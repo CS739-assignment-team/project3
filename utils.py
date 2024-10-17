@@ -31,3 +31,5 @@ def extract_server_url(server_name):
             print("Failed to resolve DNS name")
             return -1, -1
     return HOST, PORT
+
+# def send_clob_with_message()

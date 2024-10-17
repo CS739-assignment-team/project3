@@ -31,7 +31,7 @@ def main():
 
     global chash
     chash = ConsistentHash(physical_servers, args.numtokens, args.replicationfactor, f'{HOST}:{PORT}')
-    # start_server()
+    start_server()
 
 def handle_client(conn, addr):
     print(f"Connected by {addr}")

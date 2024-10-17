@@ -62,6 +62,26 @@ def kv739_init(server_name, servfile):
         print(f"Connection error to {server_name}: {e}")
         return reconnect(servfile)
 
+def init_server_without_reconnect(server_name):
+    HOST, PORT = server_name.split(':')
+    PORT = int(PORT)
+
+    ip_pattern = re.compile(r'^(\d{1,3}\.){3}\d{1,3}$')
+    if not ip_pattern.match(HOST):
+        try:
+            HOST = socket.gethostbyname(HOST)
+            print(f"Resolved DNS name to IP: {HOST}")
+        except socket.gaierror:
+            print("Failed to resolve DNS name")
+            return -1
+
+    # HOST = 'localhost'
+    # print(f"host: {HOST} port: {PORT}")
+    thread_local.conn = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    thread_local.conn.connect((HOST, PORT))
+    print(f"Connected to {HOST}:{PORT}")
+    return 0
+
 def kv739_shutdown(servfile):
     conn = thread_local.conn
     try:
@@ -92,43 +112,49 @@ def kv739_get(key, servfile):
 
     try:
         conn.sendall(f'GET {key}'.encode('utf-8'))
-        response = conn.recv(4096).decode('utf-8')
+        response = conn.recv(4096)
 
+        messages = response.split(b'|--|', 1)
+
+        if len(messages) > 1:
+            print(messages)
+            code = messages[0].decode('utf-8')
+            if code == "RETRY_PRIMARY":
+                replicas = pickle.loads(messages[1])
+                kv739_shutdown(servfile)
+                found_server = False
+                for index, replica in enumerate(replicas):
+                    curr_server = replica.rpartition('-')[0]
+                    try:
+                        response = init_server_without_reconnect(curr_server)
+                        if response == -1:
+                            continue
+                        conn = thread_local.conn
+                        conn.sendall(f'GET {key} {index}'.encode('utf-8'))
+                        response = conn.recv(4096)
+                        found_server = True
+                        break
+                    except Exception as e:
+                        print(e)
+                        print(f'exception occured while connecting to server {curr_server} ignoring')
+                        continue
+                #couldnot connect to any server should add more backups or redistribute 
+                if not found_server:
+                    return -1
+
+
+        response = response.decode("utf-8")
         if response.startswith('VALUE'):
             value = response.split(' ', 1)[1]
             if len(value) > MAX_VALUE_SIZE:
                 print("Error: Retrieved value exceeds maximum allowed size.")
                 return -1
             return (0, value)
-        elif response.startswith('RETRY_PRIMARY'):
-            value = response.split(' ', 1)[1]
-            nodes_list = pickle.loads(value)
-            for node in nodes_list:
-                host, port = extract_server_url(node)
-                try:
-                    new_conn = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-                    new_conn.connect((host, port))
-                    print(f"Connected to {host}:{port}")
-                    conn.sendall(f'GET {key}'.encode('utf-8'))
-                    response = conn.recv(4096).decode('utf-8')
-
-                    if response.startswith('VALUE'):
-                        value = response.split(' ', 1)[1]
-                        if len(value) > MAX_VALUE_SIZE:
-                            print("Error: Retrieved value exceeds maximum allowed size.")
-                            return -1
-                        return (0, value)
-                    elif response == "KEY_NOT_FOUND":
-                        return 1
-
-                except Exception:
-                    print(f'couldn\'t connect to the server {host}:{port}')
-
 
         elif response == "KEY_NOT_FOUND":
             return 1
         else:
-            print("Connection to server lost during PUT request.")
+            print("Connection to server lost during GET request.")
             return reconnect(servfile)
         
     except (ConnectionResetError, socket.error):
@@ -142,33 +168,46 @@ def kv739_put(key, new_value, servfile):
     conn = thread_local.conn
     MAX_VALUE_SIZE = 2048
 
+    if len(new_value) > MAX_VALUE_SIZE:
+        print("Error: New value exceeds maximum allowed size...")
+        return -1
+    
     try:
-        conn.sendall(f'GET {key}'.encode('utf-8'))
-        response = conn.recv(4096).decode('utf-8')
-
-        if response.startswith('VALUE'):
-            old_value = response.split(' ', 1)[1]
-            has_old_value = True
-        elif response.startswith('RETRY_PRIMARY'):
-            server = response.split(' ', 1)[1]
-            kv739_shutdown(servfile)
-
-
-        elif response == "KEY_NOT_FOUND":
-            has_old_value = False
-        else:
-            print("Error: could not retrieve old value...")
-            return -1
-
-        if len(new_value) > MAX_VALUE_SIZE:
-            print("Error: New value exceeds maximum allowed size...")
-            return -1
-
         conn.sendall(f'PUT {key} {new_value}'.encode('utf-8'))
-        response = conn.recv(1024).decode('utf-8')
+        response = conn.recv(4096)
+
+        messages = response.split(b'|--|', 1)
+
+        if len(messages) > 1:
+            code = messages[0].decode('utf-8')
+            if code == "RETRY_PRIMARY":
+                replicas = pickle.loads(messages[1])
+                kv739_shutdown(servfile)
+                found_server = False
+                for index, replica in enumerate(replicas):
+                    curr_server = replica.rpartition('-')[0]
+                    try:
+                        response = init_server_without_reconnect(curr_server)
+                        if response == -1:
+                            continue
+                        conn = thread_local.conn
+                        conn.sendall(f'PUT {key} {new_value} {index}'.encode('utf-8'))
+                        response = conn.recv(4096)
+                        found_server = True
+                        break
+                    except Exception as e:
+                        print(e)
+                        print(f'exception occured while connecting to server {curr_server} ignoring')
+                        continue
+                #couldnot connect to any server should add more backups or redistribute 
+                if not found_server:
+                    return -1
+
+        response = response.decode("utf-8")
 
         if response.startswith('UPDATED'):
-            return (0, old_value) if has_old_value else 1
+            old_value = response.split(' ')[1]
+            return (0, old_value)
         elif response == "INSERTED":
             return 1
         else:
@@ -184,10 +223,9 @@ def kv739_put(key, new_value, servfile):
 
 def kv739_die(server_name, clean):
     kv739_shutdown(servers_file)
-    kv739_init(server_name)
     try:
+        init_server_without_reconnect(server_name)
         conn = thread_local.conn
-        MAX_VALUE_SIZE = 2048
         conn.sendall(f'DIE {server_name} {clean}'.encode('utf-8'))
         response= conn.recv(4096).decode('utf-8')
         return response

@@ -145,44 +145,49 @@ def die(server_name, clean):
             os.remove(state_file_name)
     sys.exit(0)
 
-def put_value(key, value):
+def put_value(key, value, server_index):
     key_hash = hash(key)
     replica_nodes = find_nodes_for_key(global_state['tokens'], global_state['token_map'], key)
     host, port = extract_server_url(replica_nodes[0])
-    if host != HOST or port != PORT:
-        return f"RETRY_PRIMARY {pickle.dumps(replica_nodes)}"
+
+    #if server index exists it means we are retrying, so even if its not primary accept it
+    if (host != HOST or port != PORT) and not server_index:
+        return b"RETRY_PRIMARY"+ b'|--|'+ pickle.dumps(replica_nodes), 'reply'
 
     with db_lock:
         conn = db_pool.get_connection()
         try:
             cursor = conn.cursor()
-            cursor.execute("SELECT version FROM kvstore WHERE key = ?", (key,))
+            cursor.execute("SELECT version,value FROM kvstore WHERE key = ?", (key,))
             row = cursor.fetchone()
             version = row[0] + 1 if row else 1
-            cursor.execute("INSERT OR REPLACE INTO kvstore (key, value, version) VALUES (?, ?, ?)", (key, value, version))
+            cursor.execute("INSERT OR REPLACE INTO kvstore (key, value, version, key_hash) VALUES (?, ?, ?, ?)", (key, value, version, key_hash))
             conn.commit()
             propagate_key(key,value,version, replica_nodes)
         finally:
             db_pool.return_connection(conn)
+        if row:
+                return row[1], 'old_value'
+        return None, 'INSERTED'
 
 '''
 check the hash of the key, identify who owns the key and redirect
 '''
-def get_value(key):
+def get_value(key, server_index):
     replica_nodes = find_nodes_for_key(global_state['tokens'], global_state['token_map'], key)
     primary_host, primary_port = extract_server_url(replica_nodes[0])
 
     #if current node is not primary send primary details
     #client updates the cache 
-    if primary_host != HOST or primary_port != PORT:
-        return f"RETRY_PRIMARY {pickle.dumps(replica_nodes)}"
+    if not server_index and (primary_host != HOST or primary_port != PORT):
+        return b"RETRY_PRIMARY"+ b'|--|'+ pickle.dumps(replica_nodes), 'reply'
     
     conn = db_pool.get_connection()
     try:
         cursor = conn.cursor()
         cursor.execute("SELECT value FROM kvstore WHERE key = ?", (key,))
         row = cursor.fetchone()
-        return row[0] if row else None
+        return row[0] if row else None,'value'
     finally:
         db_pool.return_connection(conn)
 
@@ -263,7 +268,6 @@ def handle_client(conn, addr):
                 if code == "REPLICATE":
                     response = replicate_state(messages[1], 0)
                     conn.sendall(f"{response}".encode("utf-8"))
-                    print('replicated state', global_state)
                     continue
                 if code == "PROPAGATE":
                     continue
@@ -281,22 +285,27 @@ def handle_client(conn, addr):
                 pass
 
             command = data.split()
-
             if command[0] == "GET":
                 key = command[1]
+                server_index = command[2] if len(command) > 2 else None
+
                 if not is_valid_key(key):
                     conn.sendall(b"INVALID_KEY")
                     continue
 
-                value = get_value(key)
-                if value:
-                    conn.sendall(f"VALUE {value}".encode("utf-8"))
+                response, response_type = get_value(key, server_index)
+                if response_type == 'reply':
+                    conn.sendall(response)
                 else:
-                    conn.sendall(b"KEY_NOT_FOUND")
+                    if response:
+                        conn.sendall(f"VALUE {response}".encode("utf-8"))
+                    else:
+                        conn.sendall(b"KEY_NOT_FOUND")
 
             elif command[0] == "PUT":
                 key = command[1]
                 value = command[2]
+                server_index = command[3] if len(command) > 3 else None
 
                 if not is_valid_key(key):
                     conn.sendall(b"INVALID_KEY")
@@ -305,13 +314,14 @@ def handle_client(conn, addr):
                     conn.sendall(b"INVALID_VALUE")
                     continue
 
-                old_value = get_value(key)
-                put_value(key, value)
+                response, response_type = put_value(key, value, server_index)
 
-                if old_value:
-                    conn.sendall(f"UPDATED {old_value}".encode("utf-8"))
-                else:
+                if response_type == "old_value":
+                    conn.sendall(f"UPDATED {response}".encode("utf-8"))
+                elif response_type == "INSERTED":
                     conn.sendall(b"INSERTED")
+                else:
+                    conn.sendall(response)
 
             elif command[0] == "SHUTDOWN":
                 conn.sendall(b"Goodbye! Closing client connection.")
