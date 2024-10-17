@@ -1,2 +1,2 @@
-snares-02:4000
-royal-04:4000
+localhost:4000
+loaclhost:4000
