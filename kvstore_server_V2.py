@@ -16,14 +16,10 @@ HOST = "localhost"
 DATABASE = 'kvstore.db'
 POOL_SIZE = 32
 PEER_LIST = None
-MAX_RETRIES = 3
+MAX_RETRIES = 1
 PORT = 4000
 
-global_state = {
-    'tokens': [],
-    'token_map': {}
-}
-
+global_state = None
 class ConnectionPool:
     def __init__(self, database, pool_size):
         self.database = database
@@ -111,16 +107,26 @@ def propagate_key(key, value, version, backup_nodes):
     return 0
 
 def replicate_state(data, retry_attempt):
+    #Mapping local state file name to port to make it unique 
+    #since all servers share fs we have to name files uniquely 
+    temp_file_name = f'sw_state_{PORT}.pickle'
+    state_file_name = f'state_{PORT}.pickle'
+    global global_state
     while retry_attempt < MAX_RETRIES:
         try: 
-            with open('sw_state.pickle', 'wb') as file:  # Write binary
-                pickle.dump(data, file)  # Serializes and saves to file
-
-            os.rename('sw_state.pickle', 'state.pickle')
-
             global_state = pickle.loads(data)  # Deserializes from file
-        except Exception:
+
+            with open(temp_file_name, 'wb') as file:  # Write binary
+                pickle.dump(global_state, file)  # Serializes and saves to file
+
+            if os.path.exists(state_file_name):
+                os.remove(state_file_name)
+
+            os.rename(temp_file_name, state_file_name)
+            return 0
+        except Exception as e:
             retry_attempt += 1
+            print(e)
             print(f'couldn\'t replicate the global state attempt {retry_attempt} max retries {MAX_RETRIES}')
     if retry_attempt == MAX_RETRIES:
         return -1
@@ -134,12 +140,14 @@ def die(server_name, clean):
         conn.sendall(f'DIE {server_name} {clean}'.encode('utf-8'))
         response = conn.recv(1024).decode('utf-8')
         conn.close()
-        os.remove('state.pickle')
+        state_file_name = f'state_{PORT}.pickle'
+        if os.path.exists(state_file_name):
+            os.remove(state_file_name)
     sys.exit(0)
 
 def put_value(key, value):
     key_hash = hash(key)
-    replica_nodes = find_nodes_for_key(key_hash)
+    replica_nodes = find_nodes_for_key(global_state['tokens'], global_state['token_map'], key)
     host, port = extract_server_url(replica_nodes[0])
     if host != HOST or port != PORT:
         return f"RETRY_PRIMARY {pickle.dumps(replica_nodes)}"
@@ -161,7 +169,7 @@ def put_value(key, value):
 check the hash of the key, identify who owns the key and redirect
 '''
 def get_value(key):
-    replica_nodes = find_nodes_for_key(key)
+    replica_nodes = find_nodes_for_key(global_state['tokens'], global_state['token_map'], key)
     primary_host, primary_port = extract_server_url(replica_nodes[0])
 
     #if current node is not primary send primary details
@@ -247,9 +255,21 @@ def handle_client(conn, addr):
     print(f"Connected by {addr}")
     try:
         while True:
-            data = conn.recv(1024).decode("utf-8")
-            # if not data:
-            #     break
+            data = conn.recv(1024)
+            messages = data.split(b'|--|', 1)
+
+            if len(messages) > 1:
+                code = messages[0].decode('utf-8')
+                if code == "REPLICATE":
+                    response = replicate_state(messages[1], 0)
+                    conn.sendall(f"{response}".encode("utf-8"))
+                    print('replicated state', global_state)
+                    continue
+                if code == "PROPAGATE":
+                    continue
+                
+            data = data.decode("utf-8")
+
             try:
                 request_json = json.loads(data)
                 if request_json.get("gossip"):
@@ -260,12 +280,6 @@ def handle_client(conn, addr):
             except json.JSONDecodeError:
                 pass
 
-            if data[0:9] == "REPLICATE":
-                replicate_state(data[10:], 0)
-                continue
-            if data[0:9] == "PROPAGATE":
-
-                continue
             command = data.split()
 
             if command[0] == "GET":
@@ -305,6 +319,7 @@ def handle_client(conn, addr):
                 break
 
             else:
+                print(data)
                 conn.sendall(b"INVALID_COMMAND")
 
     except Exception as e:
@@ -318,6 +333,7 @@ def start_server():
     parser.add_argument("--servfile", help="Filename of a text file with peer host:port list", required=True)
 
     args = parser.parse_args()
+    global PORT
     PORT = int(args.port)
 
     peers = []

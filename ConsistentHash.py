@@ -11,7 +11,7 @@ from kvstore_client_V2 import *
 
 class ConsistentHash:
     HASH_BITS = 128
-    
+    SEPERATOR = b'|--|'
     '''
     USAGE:
     nodes: nodes in the system (host:port)
@@ -59,7 +59,7 @@ class ConsistentHash:
 
         for index, token in enumerate(self.tokens):
             for i in range(replicas):
-                self.token_map[token].append(self.token_map[self.tokens[(index+i)%len(self.tokens)]])
+                self.token_map[token].append(token_to_node_map[self.tokens[(index+i)%len(self.tokens)]])
 
         #TODO: replicate the token map to all nodes 
         self._save_and_share_globalstate()
@@ -83,7 +83,6 @@ class ConsistentHash:
     
     def _share_data(self, node, byte):
         try:
-
             HOST, PORT = self._get_server_ip(node).split(':')
             PORT = int(PORT)
 
@@ -91,7 +90,7 @@ class ConsistentHash:
             conn.connect((HOST, PORT))
 
             #replicate the global state
-            conn.sendall(f'REPLICATE {byte}'.encode('utf-8'))
+            conn.sendall('REPLICATE'.encode('utf-8')+self.SEPERATOR+byte)
             response = conn.recv(4096).decode('utf-8')
             #disconnect
             conn.sendall(b'SHUTDOWN')
@@ -100,7 +99,7 @@ class ConsistentHash:
             
             conn.close()
         except Exception:
-            print(f'Master cannot connet to the node {node} to replicate state')
+            print(f'Master cannot connect to the node {node} to replicate state')
 
         
     def _save_and_share_globalstate(self):
@@ -116,11 +115,16 @@ class ConsistentHash:
         with open('sw_state.pickle', 'wb') as file:  # Write binary
             pickle.dump(global_state, file)  # Serializes and saves to file
   
+        if os.path.exists('state.pickle'):
+            os.remove('state.pickle')
+            
         os.rename('sw_state.pickle' , 'state.pickle')
 
         byte_data = pickle.dumps(global_state)
 
+
         for node in self.nodes:
+            print(node)
             threading.Thread(target=self._share_data, args=(node,byte_data), daemon=True).start()
 
     '''

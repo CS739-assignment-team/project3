@@ -36,6 +36,7 @@ def reconnect(servfile):
         return -1
 
 def kv739_init(server_name, servfile):
+    global servers_file
     servers_file = servfile
     try:
         HOST, PORT = server_name.split(':')
@@ -137,7 +138,7 @@ def kv739_get(key, servfile):
         print(f"Error during GET: {e}")
         return -1
 
-def kv739_put(key, new_value, old_value, servfile):
+def kv739_put(key, new_value, servfile):
     conn = thread_local.conn
     MAX_VALUE_SIZE = 2048
 
@@ -150,7 +151,7 @@ def kv739_put(key, new_value, old_value, servfile):
             has_old_value = True
         elif response.startswith('RETRY_PRIMARY'):
             server = response.split(' ', 1)[1]
-            kv739_shutdown()
+            kv739_shutdown(servfile)
 
 
         elif response == "KEY_NOT_FOUND":
@@ -182,7 +183,7 @@ def kv739_put(key, new_value, old_value, servfile):
         return -1
 
 def kv739_die(server_name, clean):
-    kv739_shutdown()
+    kv739_shutdown(servers_file)
     kv739_init(server_name)
     try:
         conn = thread_local.conn
