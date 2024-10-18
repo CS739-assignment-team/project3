@@ -89,7 +89,8 @@ def share_data(key, value, version, node):
             'value': value,
             'version': version
         }
-        conn.sendall(f'PROPAGATE {pickle.dumps(payload)}'.encode('utf-8'))
+        message = b"PROPAGATE"+b"|--|"+pickle.dumps(payload)
+        conn.sendall(message)
         response = conn.recv(1024).decode('utf-8')
 
 
@@ -191,6 +192,25 @@ def get_value(key, server_index):
     finally:
         db_pool.return_connection(conn)
 
+def replicate_key(key, value, version):
+    key_hash = hash(key)
+
+    with db_lock:
+        conn = db_pool.get_connection()
+        try:
+            cursor = conn.cursor()
+            cursor.execute("SELECT version,value FROM kvstore WHERE key = ?", (key,))
+            row = cursor.fetchone()
+            if row and version <= row[0]:
+                print(f'Warning: replicating to older version for key, {key}')
+            cursor.execute("INSERT OR REPLACE INTO kvstore (key, value, version, key_hash) VALUES (?, ?, ?, ?)", (key, value, version, key_hash))
+            conn.commit()
+
+        finally:
+            db_pool.return_connection(conn)
+    return 0
+
+
 def get_versioned_data():
     conn = db_pool.get_connection()
     try:
@@ -270,6 +290,9 @@ def handle_client(conn, addr):
                     conn.sendall(f"{response}".encode("utf-8"))
                     continue
                 if code == "PROPAGATE":
+                    payload = pickle.loads(messages[1])
+                    response = replicate_key(payload['key'], payload['value'], payload['version'])
+                    conn.sendall(f"{response}".encode("utf-8"))
                     continue
                 
             data = data.decode("utf-8")
