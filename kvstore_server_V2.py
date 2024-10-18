@@ -9,7 +9,7 @@ import time
 import json
 import mmh3, pickle, os
 from utils import *
-import sys
+import traceback
 import psutil
 
 #todo
@@ -132,6 +132,7 @@ def replicate_state(data, retry_attempt):
         except Exception as e:
             retry_attempt += 1
             print(e)
+            traceback.print_exc()
             print(f'couldn\'t replicate the global state attempt {retry_attempt} max retries {MAX_RETRIES}')
     if retry_attempt == MAX_RETRIES:
         return -1
@@ -156,7 +157,8 @@ def die(server_name, clean, client_connection):
 
 def put_value(key, value, server_index):
     key_hash = hash(key)
-    replica_nodes = find_nodes_for_key(global_state['tokens'], global_state['token_map'], key)
+    replica_nodes = set(find_nodes_for_key(global_state['tokens'], global_state['token_map'], key))
+    replica_nodes = list(replica_nodes)
     host, port = extract_server_url(replica_nodes[0])
 
     #if server index exists it means we are retrying, so even if its not primary accept it
@@ -173,10 +175,12 @@ def put_value(key, value, server_index):
             cursor.execute("INSERT OR REPLACE INTO kvstore (key, value, version, key_hash) VALUES (?, ?, ?, ?)", (key, value, version, str(key_hash)))
             conn.commit()
             propagate_key(key,value,version, replica_nodes)
+
+            if row:
+                return row[1], 'old_value'
         finally:
             db_pool.return_connection(conn)
-        if row:
-                return row[1], 'old_value'
+
         return None, 'INSERTED'
 
 '''
@@ -211,7 +215,7 @@ def replicate_key(key, value, version):
             row = cursor.fetchone()
             if row and version <= row[0]:
                 print(f'Warning: replicating to older version for key, {key}')
-            cursor.execute("INSERT OR REPLACE INTO kvstore (key, value, version, key_hash) VALUES (?, ?, ?, ?)", (key, value, version, key_hash))
+            cursor.execute("INSERT OR REPLACE INTO kvstore (key, value, version, key_hash) VALUES (?, ?, ?, ?)", (key, value, version, str(key_hash)))
             conn.commit()
 
         finally:
