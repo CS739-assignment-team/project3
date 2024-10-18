@@ -170,7 +170,7 @@ def put_value(key, value, server_index):
             cursor.execute("SELECT version,value FROM kvstore WHERE key = ?", (key,))
             row = cursor.fetchone()
             version = row[0] + 1 if row else 1
-            cursor.execute("INSERT OR REPLACE INTO kvstore (key, value, version, key_hash) VALUES (?, ?, ?, ?)", (key, value, version, key_hash))
+            cursor.execute("INSERT OR REPLACE INTO kvstore (key, value, version, key_hash) VALUES (?, ?, ?, ?)", (key, value, version, str(key_hash)))
             conn.commit()
             propagate_key(key,value,version, replica_nodes)
         finally:
