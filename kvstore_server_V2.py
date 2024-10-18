@@ -10,6 +10,8 @@ import json
 import mmh3, pickle, os
 from utils import *
 import sys
+import psutil
+
 #todo
 #HOST = socket.gethostname()
 HOST = "localhost"
@@ -18,6 +20,8 @@ POOL_SIZE = 32
 PEER_LIST = None
 MAX_RETRIES = 1
 PORT = 4000
+PID = os.getpid()
+
 
 global_state = None
 class ConnectionPool:
@@ -133,7 +137,7 @@ def replicate_state(data, retry_attempt):
         return -1
     return 0
 
-def die(server_name, clean):
+def die(server_name, clean, client_connection):
     if clean == 1:
         conn = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         leader_host, leader_port = global_state['leader_address'].split(':')
@@ -144,7 +148,11 @@ def die(server_name, clean):
         state_file_name = f'state_{PORT}.pickle'
         if os.path.exists(state_file_name):
             os.remove(state_file_name)
-    sys.exit(0)
+        
+        client_connection.sendall(b'Done with operation! shutting down')
+    print(f'killing the process with PID: {PID}')
+    process = psutil.Process(PID)
+    process.terminate()
 
 def put_value(key, value, server_index):
     key_hash = hash(key)
@@ -350,7 +358,9 @@ def handle_client(conn, addr):
                 conn.sendall(b"Goodbye! Closing client connection.")
                 print(f"Client at {addr} is shutting down.")
                 break
-
+            
+            elif command[0] == "DIE":
+                die(command[1], command[2], conn)
             else:
                 print(data)
                 conn.sendall(b"INVALID_COMMAND")
