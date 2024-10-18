@@ -7,9 +7,9 @@ import pickle
 from utils import extract_server_url
 
 thread_local = threading.local()
-servers_file = ''
+servfile = ''
 
-def reconnect(servfile):
+def reconnect():
     try:
         with open(servfile, 'r') as file:
             servers = file.read().splitlines()
@@ -35,9 +35,9 @@ def reconnect(servfile):
         print(f"Failed to reconnect to any server: {e}")
         return -1
 
-def kv739_init(server_name, servfile):
-    global servers_file
-    servers_file = servfile
+def kv739_init(server_name, servers_file):
+    global servfile
+    servfile = servers_file
     try:
         HOST, PORT = server_name.split(':')
         PORT = int(PORT)
@@ -60,7 +60,7 @@ def kv739_init(server_name, servfile):
 
     except Exception as e:
         print(f"Connection error to {server_name}: {e}")
-        return reconnect(servfile)
+        return reconnect()
 
 def init_server_without_reconnect(server_name):
     HOST, PORT = server_name.split(':')
@@ -82,7 +82,7 @@ def init_server_without_reconnect(server_name):
     print(f"Connected to {HOST}:{PORT}")
     return 0
 
-def kv739_shutdown(servfile):
+def kv739_shutdown():
     conn = thread_local.conn
     try:
         if conn:
@@ -98,15 +98,15 @@ def kv739_shutdown(servfile):
             return -1
     except (ConnectionResetError, socket.error):
         print("Connection to server lost during shutdown.")
-        return reconnect(servfile)
+        return reconnect()
     except Exception as e:
         print(f"Error during shutdown: {e}")
         return -1
 
 def init_random_connection():
-    reconnect(servers_file)
+    reconnect()
 
-def kv739_get(key, servfile):
+def kv739_get(key):
     conn = thread_local.conn
     MAX_VALUE_SIZE = 2048
 
@@ -121,7 +121,7 @@ def kv739_get(key, servfile):
             code = messages[0].decode('utf-8')
             if code == "RETRY_PRIMARY":
                 replicas = pickle.loads(messages[1])
-                kv739_shutdown(servfile)
+                kv739_shutdown()
                 found_server = False
                 for index, replica in enumerate(replicas):
                     curr_server = replica.rpartition('-')[0]
@@ -155,16 +155,16 @@ def kv739_get(key, servfile):
             return 1
         else:
             print("Connection to server lost during GET request.")
-            return reconnect(servfile)
+            return reconnect()
         
     except (ConnectionResetError, socket.error):
         print("Connection to server lost during GET request.")
-        return reconnect(servfile)
+        return reconnect()
     except Exception as e:
         print(f"Error during GET: {e}")
         return -1
 
-def kv739_put(key, new_value, servfile):
+def kv739_put(key, new_value):
     conn = thread_local.conn
     MAX_VALUE_SIZE = 2048
 
@@ -182,7 +182,7 @@ def kv739_put(key, new_value, servfile):
             code = messages[0].decode('utf-8')
             if code == "RETRY_PRIMARY":
                 replicas = pickle.loads(messages[1])
-                kv739_shutdown(servfile)
+                kv739_shutdown()
                 found_server = False
                 for index, replica in enumerate(replicas):
                     curr_server = replica.rpartition('-')[0]
@@ -212,17 +212,17 @@ def kv739_put(key, new_value, servfile):
             return 1
         else:
             print("Unexpected server response during PUT, reconnecting...")
-            return reconnect(servfile)
+            return reconnect()
 
     except (ConnectionResetError, socket.error):
         print("Connection to server lost during PUT request.")
-        return reconnect(servfile)
+        return reconnect()
     except Exception as e:
         print(f"Error during PUT: {e}")
         return -1
 
 def kv739_die(server_name, clean):
-    kv739_shutdown(servers_file)
+    kv739_shutdown()
     try:
         init_server_without_reconnect(server_name)
         conn = thread_local.conn
@@ -250,7 +250,7 @@ def main():
             continue
 
         elif command[0] == 'get' and len(command) == 2:
-            response = kv739_get(command[1], args.servfile)
+            response = kv739_get(command[1])
             if type(response) == int:
                 if response == 1:
                     print("Key not found...")
@@ -260,7 +260,7 @@ def main():
                 print(f"Value: {response[1]}")
 
         elif command[0] == 'put' and len(command) == 3:
-            response = kv739_put(command[1], command[2], args.servfile)
+            response = kv739_put(command[1], command[2])
             if type(response) == int:
                 break
             elif len(response) == 3:
@@ -269,7 +269,7 @@ def main():
                 print(f"New Value: {response[1]}")
 
         elif command[0] == 'shutdown':
-            kv739_shutdown(args.servfile)
+            kv739_shutdown()
             break
 
         else:
