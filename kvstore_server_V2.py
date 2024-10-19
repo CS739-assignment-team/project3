@@ -95,13 +95,8 @@ def share_data(key, value, version, node):
         }
         message = b"PROPAGATE"+b"|--|"+pickle.dumps(payload)
         conn.sendall(message)
-        response = conn.recv(1024).decode('utf-8')
+        conn.recv(1024).decode('utf-8')
 
-
-        conn.sendall(b'SHUTDOWN')
-        response = conn.recv(1024)
-        print(response.decode('utf-8'))
-            
         conn.close()
     except Exception as e:
         print(f"Connection error to {node}: {e}")
@@ -318,7 +313,8 @@ def handle_client(conn, addr):
                     return
             except json.JSONDecodeError:
                 pass
-
+            
+            # print(data)
             command = data.split()
             if command[0] == "GET":
                 key = command[1]
@@ -370,6 +366,7 @@ def handle_client(conn, addr):
                 conn.sendall(b"INVALID_COMMAND")
 
     except Exception as e:
+        traceback.print_exc()
         print(f"Error: {e}")
     finally:
         conn.close()
@@ -382,6 +379,16 @@ def start_server():
     args = parser.parse_args()
     global PORT
     PORT = int(args.port)
+
+    #if local state exists load it
+    global global_state
+    local_state_filename = f'state_{PORT}.pickle'
+    if os.path.exists(local_state_filename):
+        with open(local_state_filename, 'rb') as file:
+            bytes = file.read()
+            if bytes:
+                global_state = pickle.loads(bytes)
+
 
     peers = []
 
