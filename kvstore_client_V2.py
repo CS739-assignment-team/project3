@@ -182,6 +182,7 @@ def kv739_put(key, new_value):
             code = messages[0].decode('utf-8')
             if code == "RETRY_PRIMARY":
                 replicas = pickle.loads(messages[1])
+                # print('retrying to replicas ', replicas)
                 kv739_shutdown()
                 found_server = False
                 for index, replica in enumerate(replicas):
@@ -201,6 +202,7 @@ def kv739_put(key, new_value):
                         continue
                 #couldnot connect to any server should add more backups or redistribute 
                 if not found_server:
+                    print('no active server found to connect')
                     return -1
 
         response = response.decode("utf-8")
@@ -262,11 +264,11 @@ def main():
         elif command[0] == 'put' and len(command) == 3:
             response = kv739_put(command[1], command[2])
             if type(response) == int:
-                break
-            elif len(response) == 3:
-                print(f"Old Value: {response[1]}\nNew Value: {response[2]}")
+                print('put response ', response)
+            # elif len(response) == 3:
+            #     print(f"Old Value: {response[1]}\nNew Value: {response[2]}")
             elif len(response) == 2:
-                print(f"New Value: {response[1]}")
+                print(f"Old Value: {response[1]}")
 
         elif command[0] == 'shutdown':
             kv739_shutdown()

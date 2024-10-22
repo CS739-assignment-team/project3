@@ -33,3 +33,14 @@ def extract_server_url(server_name):
     return HOST, PORT
 
 # def send_clob_with_message()
+
+def resolve_host(host):
+    ip_pattern = re.compile(r'^(\d{1,3}\.){3}\d{1,3}$')
+    if not ip_pattern.match(host):
+        try:
+            host = socket.gethostbyname(host)
+            print(f"Resolved DNS name to IP: {host}")
+        except socket.gaierror:
+            print("Failed to resolve DNS name")
+            return -1
+    return host

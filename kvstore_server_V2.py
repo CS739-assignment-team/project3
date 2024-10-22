@@ -13,8 +13,8 @@ import traceback
 import psutil
 
 #todo
-#HOST = socket.gethostname()
-HOST = "localhost"
+# HOST = socket.gethostname()
+HOST = resolve_host("localhost")
 DATABASE = 'kvstore.db'
 POOL_SIZE = 32
 PEER_LIST = None
@@ -80,13 +80,17 @@ def is_valid_value(value):
     return len(value) <= 2048 and all(c in string.printable for c in value)
 
 def share_data(key, value, version, node):
-    HOST,PORT = extract_server_url(node)
-    if HOST == -1:
+    host,port = extract_server_url(node)
+    # print(f'current host {HOST} and  port {PORT}')
+    # print(f'replicating host {host} port {port}')
+    if host == -1:
         return -1
+    if host == HOST and port == PORT:
+        return 0
     try:
         conn = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        conn.connect((HOST, PORT))
-        print(f"Connected to {HOST}:{PORT}")
+        conn.connect((host, port))
+        print(f"Connected to {host}:{port}")
         
         payload = {
             'key': key,
@@ -95,11 +99,14 @@ def share_data(key, value, version, node):
         }
         message = b"PROPAGATE"+b"|--|"+pickle.dumps(payload)
         conn.sendall(message)
-        conn.recv(1024).decode('utf-8')
-
-        conn.close()
+        response = conn.recv(1024).decode('utf-8')
+        # print(f'response from remote {response}')
+        conn.sendall(b'SHUTDOWN')
+        # print('sent shotdown')
     except Exception as e:
         print(f"Connection error to {node}: {e}")
+    finally:
+        conn.close()
         
 def propagate_key(key, value, version, backup_nodes):
     for node in backup_nodes:
@@ -152,8 +159,7 @@ def die(server_name, clean, client_connection):
 
 def put_value(key, value, server_index):
     key_hash = hash(key)
-    replica_nodes = set(find_nodes_for_key(global_state['tokens'], global_state['token_map'], key))
-    replica_nodes = list(replica_nodes)
+    replica_nodes = find_nodes_for_key(global_state['tokens'], global_state['token_map'], key)
     host, port = extract_server_url(replica_nodes[0])
 
     #if server index exists it means we are retrying, so even if its not primary accept it
@@ -169,6 +175,7 @@ def put_value(key, value, server_index):
             version = row[0] + 1 if row else 1
             cursor.execute("INSERT OR REPLACE INTO kvstore (key, value, version, key_hash) VALUES (?, ?, ?, ?)", (key, value, version, str(key_hash)))
             conn.commit()
+
             propagate_key(key,value,version, replica_nodes)
 
             if row:
@@ -289,7 +296,8 @@ def handle_client(conn, addr):
         while True:
             data = conn.recv(1024)
             messages = data.split(b'|--|', 1)
-
+            if not data:
+                print('server sent empty message ', addr)
             if len(messages) > 1:
                 code = messages[0].decode('utf-8')
                 if code == "REPLICATE":
@@ -299,6 +307,7 @@ def handle_client(conn, addr):
                 if code == "PROPAGATE":
                     payload = pickle.loads(messages[1])
                     response = replicate_key(payload['key'], payload['value'], payload['version'])
+                    print(f'replication key {payload['key']} server response {response}')
                     conn.sendall(f"{response}".encode("utf-8"))
                     continue
                 
@@ -315,7 +324,9 @@ def handle_client(conn, addr):
                 pass
             
             # print(data)
-            command = data.split()
+            command = data.split(' ')
+            # print(command)
+
             if command[0] == "GET":
                 key = command[1]
                 server_index = command[2] if len(command) > 2 else None
@@ -398,7 +409,7 @@ def start_server():
             peers.append((host, int(port)))
             
     init_db()
-    threading.Thread(target=gossip_periodically, args=(peers,PORT), daemon=True).start()
+    # threading.Thread(target=gossip_periodically, args=(peers,PORT), daemon=True).start()
 
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
         s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
