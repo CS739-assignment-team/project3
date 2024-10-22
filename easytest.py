@@ -44,8 +44,15 @@ def test_decreasing_instances():
     if kv739_init(sn, config_file) == 0:
         print(f"Successfully connected.")
 
-    kv739_put("k2", "v2")
-    print("getvalue:",kv739_get("k2"))
+    print("CKPT1")
+    key = f"key_100_1"
+    value = f"value_100_1"
+    put_result = kv739_put(key, value)
+    print("putres:",put_result)
+       
+    print("CKPT2")
+    get_result = kv739_get(key)
+    print("getvalue:",get_result)
 
     for process in server_process_list:
         process.terminate()

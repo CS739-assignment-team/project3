@@ -70,7 +70,7 @@ def init_server_without_reconnect(server_name):
     if not ip_pattern.match(HOST):
         try:
             HOST = socket.gethostbyname(HOST)
-            print(f"Resolved DNS name to IP: {HOST}")
+            #print(f"Resolved DNS name to IP: {HOST}")
         except socket.gaierror:
             print("Failed to resolve DNS name")
             return -1

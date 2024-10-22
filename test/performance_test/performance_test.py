@@ -3,35 +3,51 @@ import os
 import sys
 import threading
 import matplotlib.pyplot as plt
-from mpl_toolkits.mplot3d import Axes3D
 from collections import defaultdict
 import random
+import subprocess
 
-num_instances = 100
+config_file = "easycheckservfile.txt"
 # lock plt
 lock = threading.Lock()
+from kvstore_client_V2 import kv739_init, kv739_shutdown, kv739_put, kv739_get
 
-# add main dir to sys.path
-main_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '../..'))
-if main_dir not in sys.path:
-    sys.path.append(main_dir)
+server_process_list =[]
 
-from test_kv739_client import kv739_init, kv739_shutdown, kv739_put, kv739_get
+clients_count, put_throughput, put_latency, get_throughput, get_latency = [],[],[],[]
+
+# kill all server process when error occurs
+def handle_keyboard_interrupt(signum, frame):
+    print("\nKeyboardInterrupt detected. Terminating all child processes...")
+
+    # enumerate all subprocess
+    for process in server_process_list:
+        try:
+            process.terminate()  
+            process.wait(timeout=1)  
+        except subprocess.TimeoutExpired:
+            process.kill()  
+            print(f"Forcefully killed process with PID {process.pid}")
+
+    print("All child processes terminated. Exiting...")
+    sys.exit(0)  
+
 
 def performance_test_with_different_instances(client_id,hot_key_percent, hot_key_access_percent , results):
 
-    total_keys = 1000  
+    total_keys = 30  
     num_hot_keys = int(total_keys * hot_key_percent)  # count hot_key_num
-    hot_keys = set(random.sample(range(total_keys), num_hot_keys))  # 随机选择热门键集合
+    hot_keys = set(random.sample(range(total_keys), num_hot_keys))  
 
     # instances num + 10 every time
-    for i in range(10, num_instances + 1, 10):
+    for i in range(100, num_instances + 1, 10):
         # temp configuration file name, add instance information when increasing
         temp_config_file = f"configure_temp_instancenum_{i}.txt"  
 
-
+        with open(temp_config_file, 'r') as servfile:
+            sn = servfile.readline()
         # init connection
-        if kv739_init(temp_config_file) == 0:
+        if kv739_init(sn, temp_config_file) == 0:
             print(f"[Client {client_id}] Successfully connected to {i} instances.")
         else:
             print(f"[Client {client_id}] Failed to connect to {i} instances.")
@@ -55,27 +71,18 @@ def performance_test_with_different_instances(client_id,hot_key_percent, hot_key
             old_value = " " * 2049 
             
             # PUT and check result
-            put_result = kv739_put(key, value, old_value)
-            if put_result == 0:
-                successful_puts += 1
-                #print(f"[Client {client_id}] PUT succeeded for key: {key}, value: {value}")
-            else:
-                print(f"[Client {client_id}] PUT failed for key: {key}, value: {value}")
+            put_result = kv739_put(key, value)
+            with lock:
+                put_total_time += time.time() - start_time
 
+            start_time = time.time()
             # GET and check result
             get_value = " " * 2049 #todo
             get_value =  f"value_{client_id}_{i}_{j}"
-            get_result = kv739_get(key, get_value)
-            if get_result == 0 and get_value.strip() == value:
-                successful_gets += 1
-                #print(f"[Client {client_id}] GET succeeded for key: {key}, value: {get_value.strip()}")
-            else:
-                print(f"[Client {client_id}] GET failed for key: {key}, expected value: {value}")
+            get_result = kv739_get(key)
+            with lock:
+                get_total_time += time.time() - start_time
 
-        total_time = time.time() - start_time
-
-        with lock:
-            results.append((i ,total_time))
 
         # close connection
         kv739_shutdown()
@@ -87,10 +94,12 @@ def performance_test_with_different_instances(client_id,hot_key_percent, hot_key
     return
 
 # multi clients
-def multi_client_test(num_clients,hot_key_percent, hot_key_access_percent , ax, ax2):
+def multi_client_test(num_clients,hot_key_percent, hot_key_access_percent):
     results = []
     threads = []
 
+    put_total_time = 0
+    get_total_time = 0
     for client_id in range(1, num_clients + 1):
         client_thread = threading.Thread(target=performance_test_with_different_instances, args=(client_id,hot_key_percent, hot_key_access_percent, results))
         threads.append(client_thread)
@@ -99,61 +108,94 @@ def multi_client_test(num_clients,hot_key_percent, hot_key_access_percent , ax, 
     for thread in threads:
         thread.join()
 
-    # count average time with same instances number
-    result_dict = defaultdict(lambda: [0])
-    # calculate average
-    for i, a in results:
-        result_dict[i][0] += a  
-
-    # todo draw 3d points
-    for i, (a_sum,) in result_dict.items():
-        ax.scatter(i, num_clients, a_sum/ 2000 / num_clients * 1000 , color='r', marker='o', label = 'Averate Latency(ms)')
-        ax2.scatter(i, num_clients, 2000 * num_clients / a_sum, color='r', marker='o', label = 'Throughput(action/s)')
+    put_latency.append(put_total_time /(num_clients * 30))
+    get_latency.append(get_total_time /(num_clients * 30))
+    put_throughput.append(num_clients * 30 / put_total_time)
+    get_throughput.append(num_clients * 30 / get_total_time)
 
 if __name__ == "__main__":
-    fig = plt.figure(figsize=(12, 6))  # 一个图形，包含两个子图
-    ax = fig.add_subplot(121, projection='3d')
-    
-    ax.set_xlabel('X (Server Instances)')
-    ax.set_ylabel('Y (Clients Num)')
-    ax.set_zlabel('Latency (ms)')
+    num_instances = 0
+    try:
+        with open(config_file, 'r') as file:
+            for line in file:
+                address, port = line.strip().split(":")
+                # todo server run code
+                #server_process_list.append(subprocess.Popen(["python3", f"../../test_kv739_server.py --port {port} --servfile {config_file}"]))
+                server_process_list.append(subprocess.Popen(["python3", "kvstore_server_V2.py", "--port", port, "--servfile", config_file]))
+                num_instances += 1
+                print(f"server start port:{port}")
+        time.sleep(3)
+        server_process_list.append(subprocess.Popen(["python3", "leader.py", "--servfile", config_file, "--numtokens=2", "--replicationfactor=2", "--port=8000"]))
+        time.sleep(3)
+        for i in range(10, num_instances + 1, 10):
+            temp_config_file = f"configure_temp_instancenum_{i}.txt"  
+            with open(temp_config_file, 'w'):
+                pass
+            # read first i lines to temp_config
+            with open( config_file, 'r') as src:
+                lines = src.readlines()
+                selected_lines = lines[:i]
+                # write to temp_config  
+                with open(temp_config_file, 'a') as tgt:
+                    tgt.writelines(selected_lines)
+        
+        fig = plt.figure(figsize=(12, 6))  # 一个图形，包含两个子图
+        plt.subplot(1, 2, 1)
+        plt.title("Latency")
+        plt.plot(clients_count, put_latency, 'b-o', label="PUT Latency")
+        plt.plot(clients_count, get_latency, 'b-o', label="GET Latency")
+        plt.xlabel("Clients count")
+        plt.ylabel("Latency(ms)")
 
-    ax2 = fig.add_subplot(122, projection='3d')
+        plt.subplot(1, 2, 2)
+        plt.title("Throughput")
+        plt.plot(clients_count, put_throughput, 'b-o', label="PUT Throughput")
+        plt.plot(clients_count, get_throughput, 'b-o', label="GET Throughput")
+        plt.xlabel("Clients count")
+        plt.ylabel("Throughput(ops/s)")
     
-    ax2.set_xlabel('X (Server Instances)')
-    ax2.set_ylabel('Y (Clients Num)')
-    ax2.set_zlabel('Throughput (action/s)')
-    
-    hot_key_percent = 0.1  # hotkey_percent
-    hot_key_access_percent = 0.9  # hotkey_access_percent
+        hot_key_percent = 0.1  # hotkey_percent
+        hot_key_access_percent = 0.9  # hotkey_access_percent
 
-    
-    config_file = "config.txt" 
-    for i in range(10, num_instances + 1, 10):
-        temp_config_file = f"configure_temp_instancenum_{i}.txt"  
-        with open(temp_config_file, 'w'):
-            pass
-        # read first i lines to temp_config
-        with open( config_file, 'r') as src:
-            lines = src.readlines()
-            selected_lines = lines[:i]
-            # write to temp_config  
-            with open(temp_config_file, 'a') as tgt:
-                tgt.writelines(selected_lines)
-    
-    # from 1 client to 10 clients
-    for c in range(1, 11):
-        multi_client_test(c ,hot_key_percent, hot_key_access_percent ,ax, ax2)
+        
+        config_file = "config.txt" 
+        for i in range(10, num_instances + 1, 10):
+            temp_config_file = f"configure_temp_instancenum_{i}.txt"  
+            with open(temp_config_file, 'w'):
+                pass
+            # read first i lines to temp_config
+            with open( config_file, 'r') as src:
+                lines = src.readlines()
+                selected_lines = lines[:i]
+                # write to temp_config  
+                with open(temp_config_file, 'a') as tgt:
+                    tgt.writelines(selected_lines)
+        
+        # from 1 client to 10 clients
+        c = 1
+        while True:
+            clients_count.append(c)
+            multi_client_test(c,hot_key_percent, hot_key_access_percent)
+            if c == 1:
+                c = 5
+                continue
+            if c == 5:
+                c = 10
+                continue
+            if c == 10:
+                break
+            #     c = 20
+            #     continue
+            # if c == 20:
+            #     c = 50
+            #     continue
+            # if c == 50:
+            #     c = 100
+            #     continue
+            # if c == 100:
+            #     break
 
-    #show graph
-    handles, labels = ax.get_legend_handles_labels()
-    unique_handles_labels = dict(zip(labels, handles))
-    ax.legend(unique_handles_labels.values(), unique_handles_labels.keys())
-
-    #show graph
-    handles2, labels2 = ax2.get_legend_handles_labels()
-    unique_handles_labels2 = dict(zip(labels2, handles2))
-    ax2.legend(unique_handles_labels2.values(), unique_handles_labels2.keys())
-
-    plt.savefig('output_plot.png')
-    plt.show()
+        plt.savefig('performance_output_plot.png')
+        plt.show()
+    except Exception as e:
+        handle_keyboard_interrupt(None, None)
