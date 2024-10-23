@@ -1,3 +1,4 @@
 state*
 kvstore.db*
 servfile.txt
+__pycache__/*
