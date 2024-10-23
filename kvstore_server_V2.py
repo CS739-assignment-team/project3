@@ -15,7 +15,8 @@ import sys
 
 #todo
 # HOST = socket.gethostname()
-HOST = resolve_host("localhost")
+# HOST = resolve_host("localhost")
+HOST = '127.0.0.1'
 DATABASE = 'kvstore.db'
 POOL_SIZE = 32
 PEER_LIST = None
@@ -385,9 +386,9 @@ def handle_client(conn, addr):
                 conn.sendall(b"INVALID_COMMAND")
 
     except Exception as e:
-        pass
-        #traceback.print_exc()
-        #print(f"Error: {e}")
+        # pass
+        traceback.print_exc()
+        print(f"Error: {e}")
     finally:
         conn.close()
 
@@ -399,6 +400,9 @@ def start_server():
     args = parser.parse_args()
     global PORT
     PORT = int(args.port)
+
+    global DATABASE
+    DATABASE = f'kvstore.db-{PORT}'
 
     #if local state exists load it
     global global_state
