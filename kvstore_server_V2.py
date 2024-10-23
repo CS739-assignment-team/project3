@@ -11,6 +11,7 @@ import mmh3, pickle, os
 from utils import *
 import traceback
 import psutil
+import sys
 
 #todo
 # HOST = socket.gethostname()
@@ -22,6 +23,13 @@ MAX_RETRIES = 1
 PORT = 4000
 PID = os.getpid()
 
+# disable all prints
+class NullWriter:
+    def write(self, arg):
+        pass
+    def flush(self):
+        pass  
+sys.stdout = NullWriter()
 
 global_state = None
 class ConnectionPool:
@@ -259,7 +267,7 @@ def gossip(peers, PORT):
         if peer == server_address:
             continue
         try:
-            with socket.create_connection(peer, timeout=2) as sock:
+            with socket.create_connection(peer, timeout=0.3) as sock:
                 local_data = get_versioned_data()
                 data = json.dumps({"gossip": True, "store": local_data})
                 sock.sendall(data.encode("utf-8"))
@@ -275,11 +283,13 @@ def gossip(peers, PORT):
                     print(f"No response received from {peer}")
 
         except (socket.timeout, socket.error, json.JSONDecodeError) as e:
-            print(f"Failed to gossip with {peer}: {e}")
+            pass
+            #todo too much info
+            #print(f"Failed to gossip with {peer}: {e}")
 
 def gossip_periodically(peers, PORT):
     while True:
-        time.sleep(2)
+        time.sleep(0.2)
         gossip(peers, PORT)
 
     # def _get_range_data(self, range, nodes):
@@ -291,7 +301,7 @@ def gossip_periodically(peers, PORT):
     # def _copy_range_data(self, range, source, destination):
 
 def handle_client(conn, addr):
-    print(f"Connected by {addr}")
+    #print(f"Connected by {addr}")
     try:
         while True:
             data = conn.recv(1024)
@@ -324,9 +334,7 @@ def handle_client(conn, addr):
                 pass
             
             # print(data)
-            command = data.split(' ')
-            # print(command)
-
+            command = data.split()
             if command[0] == "GET":
                 key = command[1]
                 server_index = command[2] if len(command) > 2 else None
@@ -373,12 +381,13 @@ def handle_client(conn, addr):
             elif command[0] == "DIE":
                 die(command[1], command[2], conn)
             else:
-                print(data)
+                #print(data)
                 conn.sendall(b"INVALID_COMMAND")
 
     except Exception as e:
-        traceback.print_exc()
-        print(f"Error: {e}")
+        pass
+        #traceback.print_exc()
+        #print(f"Error: {e}")
     finally:
         conn.close()
 
