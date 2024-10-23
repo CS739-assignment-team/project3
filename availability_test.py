@@ -126,7 +126,6 @@ def test_decreasing_instances():
         print(f"instance number:{num_instances}, successful PUTs rate: {successful_puts}/{30}, successful GETs rate: {successful_gets}/{30}.")
         #draw graph
         instances.append(num_instances)
-
         put_success_rate.append(float(successful_puts/30*100))
         get_success_rate.append(float(successful_gets/30*100))
 
