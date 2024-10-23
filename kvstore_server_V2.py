@@ -304,7 +304,7 @@ def handle_client(conn, addr):
     #print(f"Connected by {addr}")
     try:
         while True:
-            data = conn.recv(1024)
+            data = conn.recv(20480)
             messages = data.split(b'|--|', 1)
             if not data:
                 print('server sent empty message ', addr)
