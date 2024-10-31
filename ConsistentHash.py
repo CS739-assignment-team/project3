@@ -7,6 +7,7 @@ import socket
 import pickle
 import os
 import threading
+import time
 from kvstore_client_V2 import *
 
 class ConsistentHash:
@@ -150,6 +151,11 @@ class ConsistentHash:
             self.nodes.append(node_address)
             #build metadata mapped to this token/virtual node
             #toekn - > servername (A-1)
+            
+            migration_plan = self.create_migration_plan(server_hash, is_node_addition=True)
+            self.signal_data_transfer(migration_plan)
+
+
             self.token_map[server_hash].append(server_name) 
             for i in range(self.num_tokens_per_node-1):
                 self.token_map[server_hash].append(self.token_map[self.tokens[(leftindex+i+1)%len(self.tokens)]][0])
@@ -171,6 +177,10 @@ class ConsistentHash:
 
             self.tokens.remove(server_hash)
             self.nodes.remove(node_address)
+
+            migration_plan = self.create_migration_plan(server_hash, is_node_addition=True)
+            self.signal_data_transfer(migration_plan)
+
             #Iterate over the left nodes which still points the deleted server and update it with next server
             #update token map
             leftindex -= 1
@@ -183,8 +193,63 @@ class ConsistentHash:
 
         self._save_and_share_globalstate()
 
-        
+    def create_migration_plan(self, new_token, is_node_addition=True):
+        """
+        Create a migration plan for data redistribution when a node is added or removed.
 
-        
+        Args:
+            new_token: The hash token of the node being added or removed.
+            is_node_addition (bool): True if adding a node, False if removing.
 
+        Returns:
+            dict: Migration plan mapping token ranges to source and destination nodes.
+        """
+        migration_plan = {}
+
+        index = self.tokens.index(new_token) if new_token in self.tokens else self.tokens.bisect_left(new_token)
+        prev_token = self.tokens[index - 1] if index > 0 else self.tokens[-1]
+
+        if is_node_addition:
+            migration_plan[new_token] = {
+                "from": [self.token_map[prev_token][0]],
+                "to": [self.token_map[new_token][0]]
+            }
+        else:
+            migration_plan[prev_token] = {
+                "from": [self.token_map[new_token][0]],
+                "to": [self.token_map[prev_token][0]]
+            }
+    
+        return migration_plan
+    
+    def signal_data_transfer(self, migration_plan):
+        """
+        Signal destination nodes to pull data from source nodes based on the migration plan.
+
+        Args:
+            migration_plan (dict): Contains source and destination nodes for each token range.
+        """
+        for token, nodes in migration_plan.items():
+            source_node = nodes["from"]
+            destination_node = nodes["to"]
+        
+        # Connect to the destination node and inform it to fetch data from the source node
+            try:
+                dest_host, dest_port = destination_node.split(':')
+                dest_port = int(dest_port)
+
+                with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as dest_socket:
+                    dest_socket.connect((dest_host, dest_port))
+                    
+                    message = f"PULL_DATA|{source_node}|{token}|{self.tokens[(self.tokens.index(token) + 1) % len(self.tokens)]}"
+                    dest_socket.sendall(message.encode())
+
+                    response = dest_socket.recv(1024).decode()
+                if response == "ACK":
+                    print(f"Destination node {destination_node} acknowledged data pull request.")
+                else:
+                    print(f"Unexpected response from {destination_node}: {response}")
+
+            except Exception as e:
+                print(f"Failed to signal destination node {destination_node} to fetch data from {source_node}: {e}")
 
