@@ -2,7 +2,7 @@ import argparse
 from ConsistentHash import ConsistentHash
 import socket
 import threading
-HOST =  socket.gethostname()
+HOST =  socket.gethostbyname("")
 PORT = 4000
 chash = None
 def main():

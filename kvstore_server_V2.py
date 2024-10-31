@@ -301,6 +301,86 @@ def gossip_periodically(peers, PORT):
 
     # def _copy_range_data(self, range, source, destination):
 
+def get_range_data(key_start, key_end):
+    """
+    Retrieve all key-value pairs within a given hash range.
+    
+    Args:
+        key_start: Start of hash range (inclusive)
+        key_end: End of hash range (exclusive)
+    Returns:
+        dict: Keys and their corresponding values, versions within the range
+    """
+    conn = db_pool.get_connection()
+    try:
+        cursor = conn.cursor()
+        # Get all keys and calculate their hashes
+        cursor.execute("SELECT key, value, version FROM kvstore")
+        all_data = cursor.fetchall()
+        
+        range_data = {}
+        for key, value, version in all_data:
+            key_hash = mmh3.hash128(key)
+            # Check if key_hash falls within the range
+            if (key_start <= key_hash < key_end) or \
+               (key_start > key_end and (key_hash >= key_start or key_hash < key_end)):
+                range_data[key] = {
+                    'value': value,
+                    'version': version
+                }
+        return range_data
+    finally:
+        db_pool.return_connection(conn)
+
+def transfer_range_data(source_node, key_start, key_end):
+    """
+    Pull data from source node for a given hash range.
+    
+    Args:
+        source_node: Address of source node (host:port)
+        key_start: Start of hash range (inclusive)
+        key_end: End of hash range (exclusive)
+    Returns:
+        bool: True if transfer successful, False otherwise
+    """
+    try:
+        host, port = source_node.split(':')
+        port = int(port)
+        
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+            s.connect((host, port))
+            # Request data for range
+            request = f"GET_RANGE {key_start} {key_end}"
+            s.sendall(request.encode())
+            
+            # Receive and process data
+            response = b""
+            while True:
+                chunk = s.recv(8192)
+                if not chunk:
+                    break
+                response += chunk
+            
+            range_data = pickle.loads(response)
+            
+            # Store received data locally
+            conn = db_pool.get_connection()
+            try:
+                cursor = conn.cursor()
+                for key, data in range_data.items():
+                    cursor.execute(
+                        "INSERT OR REPLACE INTO kvstore (key, value, version) VALUES (?, ?, ?)",
+                        (key, data['value'], data['version'])
+                    )
+                conn.commit()
+                return True
+            finally:
+                db_pool.return_connection(conn)
+                
+    except Exception as e:
+        print(f"Error transferring data from {source_node}: {e}")
+        return False
+
 def handle_client(conn, addr):
     #print(f"Connected by {addr}")
     try:
@@ -318,7 +398,7 @@ def handle_client(conn, addr):
                 if code == "PROPAGATE":
                     payload = pickle.loads(messages[1])
                     response = replicate_key(payload['key'], payload['value'], payload['version'])
-                    print(f'replication key {payload['key']} server response {response}')
+                    # print(f'replication key {payload['key']} server response {response}')
                     conn.sendall(f"{response}".encode("utf-8"))
                     continue
                 
@@ -373,6 +453,25 @@ def handle_client(conn, addr):
                     conn.sendall(b"INSERTED")
                 else:
                     conn.sendall(response)
+            
+            elif command[0] == "GET_RANGE":
+                key_start = int(command[1])
+                key_end = int(command[2])
+                range_data = get_range_data(key_start, key_end)
+                conn.sendall(pickle.dumps(range_data))
+
+            elif command[0] == "PULL_DATA":
+            # Format: PULL_DATA|source_node|start_token|end_token
+                source_node = command[1]
+                start_token = int(command[2])
+                end_token = int(command[3])
+    
+                success = transfer_range_data(source_node, start_token, end_token)
+                if success:
+                    conn.sendall(b"ACK")
+                else:
+                    conn.sendall(b"TRANSFER_FAILED")
+        
 
             elif command[0] == "SHUTDOWN":
                 conn.sendall(b"Goodbye! Closing client connection.")
