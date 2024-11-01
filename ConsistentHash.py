@@ -8,6 +8,7 @@ import pickle
 import os
 import threading
 from kvstore_client_V2 import *
+import copy
 
 class ConsistentHash:
     HASH_BITS = 128
@@ -53,13 +54,13 @@ class ConsistentHash:
         self.tokens = virtual_nodes
 
         #Assign token to nodes in ring fashion each vn get rf physical nodes
-        self.token_map = defaultdict(deque)
+        self.token_map = defaultdict(list)
         #token1 -> node1, (replicas-1) - nodes from next tokens
         #for token1 node1 is primary and rest of the nodes are backup
 
         for index, token in enumerate(self.tokens):
             for i in range(replicas):
-                self.token_map[token].append(token_to_node_map[self.tokens[(index+i)%len(self.tokens)]])
+                self.token_map[token].append(token_to_node_map[self.tokens[(index-i)%len(self.tokens)]])
 
         #TODO: replicate the token map to all nodes 
         self._save_and_share_globalstate()
@@ -95,7 +96,7 @@ class ConsistentHash:
             #disconnect
             conn.sendall(b'SHUTDOWN')
             response = conn.recv(1024)
-            print(response.decode('utf-8'))
+            # print(response.decode('utf-8'))
             
             conn.close()
         except Exception:
@@ -124,13 +125,14 @@ class ConsistentHash:
 
 
         for node in self.nodes:
-            print(node)
+            # print(node)
             threading.Thread(target=self._share_data, args=(node,byte_data), daemon=True).start()
 
     '''
     node_Address : ip:port or hostname:port
     '''
     def add_node(self, node_address):
+        self.nodes.append(node_address)
         for i in range(self.num_tokens_per_node):
             server_name = f"{node_address}-{i+1}"
             server_hash = mmh3.hash128(server_name)
@@ -147,12 +149,13 @@ class ConsistentHash:
             Just add the metadata data will forked by new server
             '''
             self.tokens.add(server_hash) 
-            self.nodes.append(node_address)
             #build metadata mapped to this token/virtual node
             #toekn - > servername (A-1)
-            self.token_map[server_hash].append(server_name) 
-            for i in range(self.num_tokens_per_node-1):
-                self.token_map[server_hash].append(self.token_map[self.tokens[(leftindex+i+1)%len(self.tokens)]][0])
+
+            self.token_map[server_hash] = copy.deepcopy(self.token_map[self.tokens[leftindex-1]])
+            for ind in range(self.replicas):
+                self.token_map[self.tokens[(leftindex+ind)%len(self.tokens)]].insert(ind, server_name)
+                self.token_map[self.tokens[(leftindex+ind)%len(self.tokens)]].pop()
         self._save_and_share_globalstate()
             
     
@@ -160,7 +163,9 @@ class ConsistentHash:
         '''
         get the virtual nodes and assign them to next set of nodes
         '''
-        for i in range(self.replicas):
+        self.nodes.remove(node_address)
+
+        for i in range(self.num_tokens_per_node):
             server_name = f'{node_address}-{i+1}'
             server_hash = self._hash(server_name)
 
@@ -170,16 +175,16 @@ class ConsistentHash:
                 continue
 
             self.tokens.remove(server_hash)
-            self.nodes.remove(node_address)
+            self.token_map.pop(server_hash)
             #Iterate over the left nodes which still points the deleted server and update it with next server
             #update token map
-            leftindex -= 1
-            for i in range(self.replicas):
-                curr_token = self.tokens[leftindex-i]
+
+            for ind in range(self.replicas-1):
+                curr_token = self.tokens[leftindex+ind]
                 replication_nodes = self.token_map[curr_token]
                 replication_nodes.remove(server_name)
-                #primary node of tx + rf -- token 
-                replication_nodes.append(self.token_map[self.tokens[(leftindex+self.replicas)%len(self.tokens)]][0])
+
+                replication_nodes.append(self.token_map[self.tokens[(leftindex+ind+1-self.replicas)%len(self.tokens)]][0])
 
         self._save_and_share_globalstate()
 

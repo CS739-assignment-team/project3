@@ -226,7 +226,10 @@ def kv739_put(key, new_value):
 def kv739_die(server_name, clean):
     kv739_shutdown()
     try:
-        init_server_without_reconnect(server_name)
+        response = init_server_without_reconnect(server_name)
+        if response == -1:
+            print('cannot connect to kill the server. Please, retry')
+            return -1
         conn = thread_local.conn
         conn.sendall(f'DIE {server_name} {clean}'.encode('utf-8'))
         response= conn.recv(4096).decode('utf-8')
@@ -257,7 +260,7 @@ def main():
                 if response == 1:
                     print("Key not found...")
                 elif response == -1:
-                    break
+                    print('response ', response)
             else:
                 print(f"Value: {response[1]}")
 
@@ -269,6 +272,10 @@ def main():
             #     print(f"Old Value: {response[1]}\nNew Value: {response[2]}")
             elif len(response) == 2:
                 print(f"Old Value: {response[1]}")
+
+        elif command[0] == 'die':
+            response = kv739_die(command[1], command[2])
+            print(response)
 
         elif command[0] == 'shutdown':
             kv739_shutdown()

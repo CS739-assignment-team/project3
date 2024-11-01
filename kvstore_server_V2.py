@@ -11,7 +11,7 @@ import mmh3, pickle, os
 from utils import *
 import traceback
 import psutil
-import sys
+
 
 #todo
 # HOST = socket.gethostname()
@@ -25,12 +25,12 @@ PORT = 4000
 PID = os.getpid()
 
 # disable all prints
-class NullWriter:
-    def write(self, arg):
-        pass
-    def flush(self):
-        pass  
-sys.stdout = NullWriter()
+# class NullWriter:
+#     def write(self, arg):
+#         pass
+#     def flush(self):
+#         pass  
+# sys.stdout = NullWriter()
 
 global_state = None
 class ConnectionPool:
@@ -153,18 +153,25 @@ def die(server_name, clean, client_connection):
     if clean == 1:
         conn = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         leader_host, leader_port = global_state['leader_address'].split(':')
-        conn.connect((leader_host, leader_port))
-        conn.sendall(f'DIE {server_name} {clean}'.encode('utf-8'))
+        conn.connect((leader_host, int(leader_port)))
+        print('leader connected to kill ndoe')
+        conn.sendall(f'DIE {server_name}'.encode('utf-8'))
         response = conn.recv(1024).decode('utf-8')
+        print('kill response ', response)
         conn.close()
         state_file_name = f'state_{PORT}.pickle'
         if os.path.exists(state_file_name):
             os.remove(state_file_name)
         
         client_connection.sendall(b'Done with operation! shutting down')
-    print(f'killing the process with PID: {PID}')
-    process = psutil.Process(PID)
-    process.terminate()
+
+        print(f'killing the process with PID: {PID}')
+        process = psutil.Process(PID)
+        process.terminate()
+    else:
+        print(f'killing the process with PID: {PID}')
+        process = psutil.Process(PID)
+        process.terminate()
 
 def put_value(key, value, server_index):
     key_hash = hash(key)
@@ -293,14 +300,6 @@ def gossip_periodically(peers, PORT):
         time.sleep(0.2)
         gossip(peers, PORT)
 
-    # def _get_range_data(self, range, nodes):
-        
-    #     for i in range(len(nodes)):
-    #         server_address = self._get_server_ip(nodes[i])
-
-
-    # def _copy_range_data(self, range, source, destination):
-
 def handle_client(conn, addr):
     #print(f"Connected by {addr}")
     try:
@@ -318,9 +317,9 @@ def handle_client(conn, addr):
                 if code == "PROPAGATE":
                     payload = pickle.loads(messages[1])
                     response = replicate_key(payload['key'], payload['value'], payload['version'])
-                    print(f'replication key {payload['key']} server response {response}')
+
                     conn.sendall(f"{response}".encode("utf-8"))
-                    continue
+                    break
                 
             data = data.decode("utf-8")
 
@@ -333,9 +332,11 @@ def handle_client(conn, addr):
                     return
             except json.JSONDecodeError:
                 pass
-            
+            if not data:
+                continue
             # print(data)
             command = data.split()
+
             if command[0] == "GET":
                 key = command[1]
                 server_index = command[2] if len(command) > 2 else None
@@ -380,7 +381,8 @@ def handle_client(conn, addr):
                 break
             
             elif command[0] == "DIE":
-                die(command[1], command[2], conn)
+                print(command[1], command[2])
+                die(command[1], int(command[2]), conn)
             else:
                 #print(data)
                 conn.sendall(b"INVALID_COMMAND")
@@ -396,7 +398,7 @@ def start_server():
     parser = argparse.ArgumentParser(description="Key-Value Store Server")
     parser.add_argument("--port", help="Server port", required=True)
     parser.add_argument("--servfile", help="Filename of a text file with peer host:port list", required=True)
-
+    parser.add_argument("--leaderaddress", help="Address of leader if joining cluster later", required=False)
     args = parser.parse_args()
     global PORT
     PORT = int(args.port)
@@ -404,7 +406,8 @@ def start_server():
     global DATABASE
     DATABASE = f'kvstore.db-{PORT}'
 
-    #if local state exists load it
+    #if local state exists load it 
+    #else wait for leader to sened it
     global global_state
     local_state_filename = f'state_{PORT}.pickle'
     if os.path.exists(local_state_filename):
@@ -414,26 +417,52 @@ def start_server():
                 global_state = pickle.loads(bytes)
 
 
-    peers = []
+    # peers = []
 
-    with open(args.servfile, 'r') as f:
-        for line in f:
-            host, port = line.strip().split(":")
-            peers.append((host, int(port)))
+    # with open(args.servfile, 'r') as f:
+    #     for line in f:
+    #         host, port = line.strip().split(":")
+    #         peers.append((host, int(port)))
             
     init_db()
     # threading.Thread(target=gossip_periodically, args=(peers,PORT), daemon=True).start()
 
+    if args.leaderaddress:
+        leader_host, leader_port = args.leaderaddress.split(':')
+        send_join_cluster_request((leader_host, leader_port))
+
+    
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
         s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         s.bind((HOST, PORT))
         s.listen()
+        s.settimeout(100)
         print(f"Server started on {HOST}:{PORT}")
 
         while True:
-            conn, addr = s.accept()
-            client_handler = threading.Thread(target=handle_client, args=(conn, addr))
-            client_handler.start()
+            try:
+                conn, addr = s.accept()
+                client_handler = threading.Thread(target=handle_client, args=(conn, addr), daemon=True)
+                client_handler.start()
+            except KeyboardInterrupt:
+                print("Server shutting down...")
+                s.close()
+            except Exception:
+                continue
+
+def send_join_cluster_request(leader_address):
+    try:
+        with socket.create_connection(leader_address, timeout=0.3) as sock:
+            address = f'{leader_address[0]}:{leader_address[1]}'
+            byte_message = b'JOIN' + b'|--|' + b'address'
+            sock.sendall(byte_message)
+
+            response = sock.recv(4096).decode("utf-8")
+            # print(f"Raw response from {peer}: '{response}'")
+
+    except (socket.timeout, socket.error, json.JSONDecodeError) as e:
+        print('cannot connect to leader')
+        pass
 
 if __name__ == "__main__":
     start_server()
