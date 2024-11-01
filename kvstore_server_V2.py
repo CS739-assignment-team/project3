@@ -307,7 +307,8 @@ def handle_client(conn, addr):
             data = conn.recv(20480)
             messages = data.split(b'|--|', 1)
             if not data:
-                print('server sent empty message ', addr)
+                print('server sent empty message closig connection', addr)
+                break
             if len(messages) > 1:
                 code = messages[0].decode('utf-8')
                 if code == "REPLICATE":
@@ -383,6 +384,9 @@ def handle_client(conn, addr):
             elif command[0] == "DIE":
                 print(command[1], command[2])
                 die(command[1], int(command[2]), conn)
+            elif command[0] == "GET_LEADER":
+                find_leader(conn)
+                break
             else:
                 #print(data)
                 conn.sendall(b"INVALID_COMMAND")
@@ -394,6 +398,15 @@ def handle_client(conn, addr):
     finally:
         conn.close()
 
+def find_leader(conn):
+    global global_state
+    leader_address = global_state.get('leader_address', None)
+    if not leader_address:
+        conn.sendall('NOT_FOUND')
+    else:
+        conn.sendall(f'{leader_address}'.encode('utf-8'))
+
+    return 
 def start_server():
     parser = argparse.ArgumentParser(description="Key-Value Store Server")
     parser.add_argument("--port", help="Server port", required=True)
