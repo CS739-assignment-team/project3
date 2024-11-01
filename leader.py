@@ -50,12 +50,28 @@ def handle_client(conn, addr):
             if data.startswith("DIE"):
                 code, new_node_address = data.split()
                 print(f'killing node {new_node_address}' )
-
-                chash.remove_node(new_node_address)
-                conn.sendall('Killed 0'.encode('utf-8'))
-                conn.close()
+                try: 
+                    result = chash.remove_node(new_node_address)
+                    conn.sendall(f'{result}'.encode('utf-8'))
+                except Exception as e:
+                    print(f'Failed to remove the node {new_node_address}', e)
+                    conn.sendall(b'-1')
+                finally:
+                    conn.close()
                 break
-                
+            elif data.startswith("JOIN"):
+                code, new_node_address = data.split()
+                print(f'Joining node {new_node_address}')
+                try:
+                    result = chash.add_node(new_node_address)
+                    conn.sendall(f'{result}'.encode('utf-8'))
+                except Exception as e:
+                    print(f'Failed to add the node {new_node_address}', e)
+                    conn.sendall(b'-1')
+                finally:
+                    conn.close()
+                break
+
 
 def start_server():
 

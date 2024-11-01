@@ -132,6 +132,8 @@ class ConsistentHash:
     node_Address : ip:port or hostname:port
     '''
     def add_node(self, node_address):
+        if node_address in self.nodes:
+            return -1
         self.nodes.append(node_address)
         for i in range(self.num_tokens_per_node):
             server_name = f"{node_address}-{i+1}"
@@ -157,12 +159,15 @@ class ConsistentHash:
                 self.token_map[self.tokens[(leftindex+ind)%len(self.tokens)]].insert(ind, server_name)
                 self.token_map[self.tokens[(leftindex+ind)%len(self.tokens)]].pop()
         self._save_and_share_globalstate()
+        return 0
             
     
     def remove_node(self, node_address):
         '''
         get the virtual nodes and assign them to next set of nodes
         '''
+        if node_address not in self.nodes:
+            return -1
         self.nodes.remove(node_address)
 
         for i in range(self.num_tokens_per_node):
@@ -180,13 +185,14 @@ class ConsistentHash:
             #update token map
 
             for ind in range(self.replicas-1):
-                curr_token = self.tokens[leftindex+ind]
+                curr_token = self.tokens[(leftindex+ind)%len(self.tokens)]
                 replication_nodes = self.token_map[curr_token]
                 replication_nodes.remove(server_name)
 
                 replication_nodes.append(self.token_map[self.tokens[(leftindex+ind+1-self.replicas)%len(self.tokens)]][0])
 
         self._save_and_share_globalstate()
+        return 0
 
         
 
