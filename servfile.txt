@@ -1,2 +1,4 @@
-snares-02:4000
-royal-04:4000
+localhost:5000
+localhost:5007
+localhost:5014
+localhost:5021
