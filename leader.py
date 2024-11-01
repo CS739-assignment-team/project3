@@ -34,15 +34,44 @@ def main():
     start_server()
 
 def handle_client(conn, addr):
+    global chash
     print(f"Connected by {addr}")
     while True:
-        data = conn.recv(1024).decode("utf-8")
-        if data.startswith("DIE"):
-            global chash
-            chash.remove_node(data[4:])
-            conn.sendall('Killed 0'.encode('utf-8'))
-            conn.close()
-            return
+        data = conn.recv(1024)
+        messages = data.split(b'|--|', 1)
+            
+        if len(messages) > 1:
+            code = messages[0].decode('utf-8')
+            if code == "JOIN":
+                new_node_address = messages[1].decode('utf-8') 
+                chash.add_node(new_node_address)
+        else:
+            data = data.decode("utf-8")
+            if data.startswith("DIE"):
+                code, new_node_address = data.split()
+                print(f'killing node {new_node_address}' )
+                try: 
+                    result = chash.remove_node(new_node_address)
+                    conn.sendall(f'{result}'.encode('utf-8'))
+                except Exception as e:
+                    print(f'Failed to remove the node {new_node_address}', e)
+                    conn.sendall(b'-1')
+                finally:
+                    conn.close()
+                break
+            elif data.startswith("JOIN"):
+                code, new_node_address = data.split()
+                print(f'Joining node {new_node_address}')
+                try:
+                    result = chash.add_node(new_node_address)
+                    conn.sendall(f'{result}'.encode('utf-8'))
+                except Exception as e:
+                    print(f'Failed to add the node {new_node_address}', e)
+                    conn.sendall(b'-1')
+                finally:
+                    conn.close()
+                break
+
 
 def start_server():
 
@@ -50,12 +79,19 @@ def start_server():
         s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         s.bind((HOST, PORT))
         s.listen()
+        s.settimeout(1)
         print(f"Server started on {HOST}:{PORT}")
 
         while True:
-            conn, addr = s.accept()
-            client_handler = threading.Thread(target=handle_client, args=(conn, addr))
-            client_handler.start()
+            try:
+                conn, addr = s.accept()
+                client_handler = threading.Thread(target=handle_client, args=(conn, addr))
+                client_handler.start()
+            except KeyboardInterrupt:
+                print("Server shutting down...")
+                s.close()
+            except Exception:
+                continue
 
 if __name__ == "__main__":
     main()

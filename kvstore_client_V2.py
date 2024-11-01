@@ -5,6 +5,7 @@ import threading
 import random
 import pickle
 from utils import extract_server_url
+import traceback
 
 thread_local = threading.local()
 servfile = ''
@@ -117,7 +118,7 @@ def kv739_get(key):
         messages = response.split(b'|--|', 1)
 
         if len(messages) > 1:
-            print(messages)
+
             code = messages[0].decode('utf-8')
             if code == "RETRY_PRIMARY":
                 replicas = pickle.loads(messages[1])
@@ -226,13 +227,67 @@ def kv739_put(key, new_value):
 def kv739_die(server_name, clean):
     kv739_shutdown()
     try:
-        init_server_without_reconnect(server_name)
+        response = init_server_without_reconnect(server_name)
+        if response == -1:
+            print('cannot connect to kill the server. Please, retry')
+            return -1
         conn = thread_local.conn
         conn.sendall(f'DIE {server_name} {clean}'.encode('utf-8'))
         response= conn.recv(4096).decode('utf-8')
-        return response
+        try:
+            # Try to convert to an integer
+            result = int(response)
+            return result
+        except ValueError:
+            return response
     except Exception:
         print(f'Failed killing server {server_name}')
+    finally:
+        reconnect()
+
+def kv739_join(server_name):
+    try:
+        conn = thread_local.conn
+        conn.sendall(b'GET_LEADER')
+        response = conn.recv(1024).decode('utf-8')
+
+        #if leader address is not found in that node reconnect to different node and try
+        if response == 'NOT_FOUND':
+            kv739_shutdown()
+            reconnect()
+            return kv739_join(server_name)
+        
+        kv739_shutdown()
+        result = __send_add_request_to_leader(server_name, response)
+        reconnect()
+        try:
+            # Try to convert to an integer
+            result = int(result)
+            return result
+        except ValueError:
+            return result
+
+    except Exception:
+        traceback.print_exc()
+        print(f'Failed to join server {server_name}')
+    return -1
+
+def __send_add_request_to_leader(server_name, leader_address):
+    print('leader ', leader_address)
+    try:
+        leader_host, leader_port = leader_address.split(':')
+        leader_conn = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        leader_conn.connect((leader_host, int(leader_port)))
+        leader_conn.sendall((f'JOIN {server_name}').encode('utf-8'))
+        response = leader_conn.recv(1024).decode('utf-8')
+        return response 
+    except Exception:
+        traceback.print_exc()
+        print(f'JOIN request to leader failed for server {server_name}')
+    finally:
+        leader_conn.close()
+    return -1
+
 
 def main():
     parser = argparse.ArgumentParser(description="Key-Value Store Client")
@@ -246,7 +301,7 @@ def main():
         return
 
     while True:
-        command = input("Enter command (get <key>, put <key> <value>, shutdown): ").strip().split()
+        command = input("Enter command (get <key>, put <key> <value>, die <server> <clean>, join <server> shutdown.): ").strip().split()
 
         if not command:
             continue
@@ -257,7 +312,7 @@ def main():
                 if response == 1:
                     print("Key not found...")
                 elif response == -1:
-                    break
+                    print('response ', response)
             else:
                 print(f"Value: {response[1]}")
 
@@ -270,12 +325,22 @@ def main():
             elif len(response) == 2:
                 print(f"Old Value: {response[1]}")
 
+        elif command[0] == 'die':
+            response = kv739_die(command[1], command[2])
+            print(response)
+
+        elif command[0] == 'join':
+            response = kv739_join(command[1])
+            if response == 0:
+                print('Successfully joined')
+            else:
+                print('Failed to join the node')
         elif command[0] == 'shutdown':
             kv739_shutdown()
             break
 
         else:
-            print("Invalid command. Available commands: get <key>, put <key> <value>, shutdown.")
+            print("Invalid command. Available commands: get <key>, put <key> <value>, die <server> <clean>, join <server> shutdown.")
 
 if __name__ == '__main__':
     main()
