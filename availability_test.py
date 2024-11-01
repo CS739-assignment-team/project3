@@ -3,8 +3,9 @@ import os
 import sys
 import subprocess
 import matplotlib.pyplot as plt
+import random
 
-config_file = "easycheckservfile.txt"
+config_file = "servfile.txt"
 server_process_list = []
 # add main dir to sys.path
 # main_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '../..'))
@@ -59,7 +60,7 @@ def test_decreasing_instances():
     # wait server to start
     time.sleep(3)
 
-    temp_config_file = "configure_temp.txt"  
+    temp_config_file = "configure_temp.txt"
     # copy original config to temp config
     with open(config_file, 'r') as src:
         content = src.read()
@@ -80,8 +81,17 @@ def test_decreasing_instances():
         print("server nodes number:", num_instances)
         # print(f"Starting {i} instances...")
         
+        # with open(temp_config_file, 'r') as servfile:
+        #     sn = servfile.readline()
+        # if kv739_init(sn, temp_config_file) == 0:
+        #     print(f"Successfully connected to {num_instances} instances.")
+        # else:
+        #     print(f"Failed to connect to {num_instances} instances.")
+        #     continue
         with open(temp_config_file, 'r') as servfile:
-            sn = servfile.readline()
+            # sn = servfile.readline()
+            lines = servfile.readlines()
+            sn = random.choice(lines).strip()
         if kv739_init(sn, temp_config_file) == 0:
             print(f"Successfully connected to {num_instances} instances.")
         else:
@@ -90,7 +100,8 @@ def test_decreasing_instances():
 
         successful_puts = 0
         successful_gets = 0
-        for j in range(30):
+        for j in range(1000):
+            print("CKPT1")
             # PUT and check result
             key = f"key_{num_instances}_{j}"
             value = f"value_{num_instances}_{j}"
@@ -107,15 +118,27 @@ def test_decreasing_instances():
                 print(f"PUT succeeded for key: {key}, value: {value}")
             else:
                 print(f"PUT failed for key: {key}, value: {value}")
-            
+        
+        kv739_shutdown()
+        with open(temp_config_file, 'r') as servfile:
+            # sn = servfile.readline()
+            lines = servfile.readlines()
+            sn = random.choice(lines).strip()
+        if kv739_init(sn, temp_config_file) == 0:
+            print(f"Successfully connected to {num_instances} instances.")
+        else:
+            print(f"Failed to connect to {num_instances} instances.")
+            continue
+        for j in range(1000):
             # GET and check result
-            get_value = " " * 2049 #todo
-            get_value =  f"value_{num_instances}_{j}"
+            key = f"key_{num_instances}_{j}"
+            value = f"value_{num_instances}_{j}"
             #todo
             #get_result = kv739_get(key, get_value)
             get_result = kv739_get(key)
             if isinstance(get_result, tuple):  # ifput_result is tuple
                 if get_result[0] == 0 and get_result[1].strip() == value:
+                    print(f"get result:{get_result}")
                     successful_gets += 1
                     #print(f"GET succeeded for key: {key}, value: {get_value.strip()}")
                 else:
@@ -123,11 +146,11 @@ def test_decreasing_instances():
             else:
                 print(f"GET failed for key: {key}, expected value: {value}")
 
-        print(f"instance number:{num_instances}, successful PUTs rate: {successful_puts}/{30}, successful GETs rate: {successful_gets}/{30}.")
+        print(f"instance number:{num_instances}, successful PUTs rate: {successful_puts}/{1000}, successful GETs rate: {successful_gets}/{1000}.")
         #draw graph
         instances.append(num_instances)
-        put_success_rate.append(float(successful_puts/30*100))
-        get_success_rate.append(float(successful_gets/30*100))
+        put_success_rate.append(float(successful_puts/1000*100))
+        get_success_rate.append(float(successful_gets/1000*100))
 
         kv739_shutdown()
         #print(f"Shutdown connection to {num_instances} instances.\n")
@@ -136,27 +159,27 @@ def test_decreasing_instances():
         server_name =""
         # remove last line in temp config, simulate a node failure
         # adjust step
-        if(num_instances > 10):
-            with open(temp_config_file, 'r') as file:
-                lines = file.readlines()
-                for count in range (10):
-                    if lines:
-                        server_name = lines[-1]
-                        lines = lines[:-1]
-                    num_instances -= 1
-                    kv739_die( server_name ,1)
+        # if(num_instances > 10):
+        #     with open(temp_config_file, 'r') as file:
+        #         lines = file.readlines()
+        #         for count in range (10):
+        #             if lines:
+        #                 server_name = lines[-1]
+        #                 lines = lines[:-1]
+        #             num_instances -= 1
+        #             kv739_die( server_name ,1)
+        #         with open(temp_config_file, 'w') as file:
+        #             file.writelines(lines)
+        # else:
+        with open(temp_config_file, 'r') as file:
+            lines = file.readlines()
+            if lines:
+                server_name = lines[-1]
+                lines = lines[:-1]
                 with open(temp_config_file, 'w') as file:
                     file.writelines(lines)
-        else:
-            with open(temp_config_file, 'r') as file:
-                lines = file.readlines()
-                if lines:
-                    server_name = lines[-1]
-                    lines = lines[:-1]
-                    with open(temp_config_file, 'w') as file:
-                        file.writelines(lines)
-                num_instances -= 1
-                kv739_die( server_name ,1)
+            num_instances -= 1
+            kv739_die( server_name ,1)
             #kill server's last instance
             #todo
         time.sleep(1)
