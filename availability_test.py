@@ -102,7 +102,6 @@ def test_decreasing_instances():
         successful_puts = 0
         successful_gets = 0
         for j in range(1000):
-            print("CKPT1")
             # PUT and check result
             key = f"key_{num_instances}_{j}"
             value = f"value_{num_instances}_{j}"
