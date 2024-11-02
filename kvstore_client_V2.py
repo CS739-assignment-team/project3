@@ -215,11 +215,13 @@ def kv739_put(key, new_value):
             return 1
         else:
             print("Unexpected server response during PUT, reconnecting...")
-            return reconnect()
+            reconnect()
+            return -1
 
     except (ConnectionResetError, socket.error):
         print("Connection to server lost during PUT request.")
-        return reconnect()
+        reconnect()
+        return -1
     except Exception as e:
         print(f"Error during PUT: {e}")
         return -1

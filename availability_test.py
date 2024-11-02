@@ -4,6 +4,7 @@ import sys
 import subprocess
 import matplotlib.pyplot as plt
 import random
+from prettytable import PrettyTable
 
 config_file = "servfile.txt"
 server_process_list = []
@@ -26,7 +27,7 @@ def handle_keyboard_interrupt(signum, frame):
             process.terminate()  
             process.wait(timeout=1)  
         except subprocess.TimeoutExpired:
-            process.kill()  
+            process.kill()   
             print(f"Forcefully killed process with PID {process.pid}")
 
     print("All child processes terminated. Exiting...")
@@ -54,7 +55,7 @@ def test_decreasing_instances():
             print(f"server start port:{port}")
     
     time.sleep(3)
-    server_process_list.append(subprocess.Popen(["python3", "leader.py", "--servfile", config_file, "--numtokens=2", "--replicationfactor=1", "--port=8000"]))
+    server_process_list.append(subprocess.Popen(["python3", "leader.py", "--servfile", config_file, "--numtokens=2", "--replicationfactor=4", "--port=8000"]))
     #server_process_list.append(subprocess.Popen(["python3", "../../leader.py", "--servfile", config_file, "--numtokens=2", "--replicationfactor=2", "--port=8000"]))
 
     # wait server to start
@@ -178,7 +179,7 @@ def test_decreasing_instances():
                 with open(temp_config_file, 'w') as file:
                     file.writelines(lines)
             num_instances -= 1
-            kv739_die( server_name ,1)
+            kv739_die( server_name ,0)
             #kill server's last instance
             #todo
         time.sleep(1)
@@ -191,10 +192,19 @@ def test_decreasing_instances():
     plt.plot(instances, put_success_rate, 'g-s', label="PUT Success Rate")
     plt.legend()
 
-    plt.savefig('availability_output_plot.png')
+    plt.savefig('availability_output_plot_repfactor4.png')
     plt.show()
-    print(get_success_rate)
-    print(put_success_rate)
+    # print(get_success_rate)
+    # print(put_success_rate)
+
+    table = PrettyTable()
+
+    table.field_names = ["Server nodes", "1", "2", "3","4", "5", "6", "7", "8", "9","10","11","12","13","14","15","16","17","18","19","20"]
+
+    table.add_row(["puts_successful_rate(%)"] + ["{:.1f}".format(rate) for rate in put_success_rate[::-1]])
+    table.add_row(["gets_successful_rate(%)"] + ["{:.1f}".format(rate) for rate in get_success_rate[::-1]])
+
+    print(table)
 
 if __name__ == "__main__":
     try:

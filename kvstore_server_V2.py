@@ -11,7 +11,8 @@ import mmh3, pickle, os
 from utils import *
 import traceback
 import psutil
-
+import concurrent.futures
+import time
 
 #todo
 # HOST = socket.gethostname()
@@ -75,7 +76,7 @@ def init_db():
         CREATE TABLE IF NOT EXISTS kvstore (
             key TEXT PRIMARY KEY,
             value TEXT,
-            version INTEGER DEFAULT 0,
+            version TEXT,
             key_hash TEXT
         )
     ''')
@@ -88,14 +89,14 @@ def is_valid_key(key):
 def is_valid_value(value):
     return len(value) <= 2048 and all(c in string.printable for c in value)
 
-def share_data(key, value, version, node):
-    host,port = extract_server_url(node)
+def share_data(key, value, version, host, port):
+
     # print(f'current host {HOST} and  port {PORT}')
     # print(f'replicating host {host} port {port}')
     if host == -1:
         return -1
-    if host == HOST and port == PORT:
-        return 0
+    # if host == HOST and port == PORT:
+    #     return 0
     try:
         conn = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         conn.connect((host, port))
@@ -113,13 +114,22 @@ def share_data(key, value, version, node):
         conn.sendall(b'SHUTDOWN')
         # print('sent shotdown')
     except Exception as e:
-        print(f"Connection error to {node}: {e}")
+        print(f"Connection error to {host}:{port}: {e}")
+        return -1
     finally:
         conn.close()
+    return 0
         
 def propagate_key(key, value, version, backup_nodes):
-    for node in backup_nodes:
-        threading.Thread(target=share_data, args=(key, value, version, node), daemon=True).start()
+    threads = []
+    for host, port in backup_nodes:
+        thread = threading.Thread(target=share_data, args=(key, value, version, host, port), daemon=True)
+        thread.start()
+        threads.append(thread)
+    
+    for thread in threads:
+        thread.join()
+
     return 0
 
 def replicate_state(data, retry_attempt):
@@ -182,24 +192,38 @@ def put_value(key, value, server_index):
     if (host != HOST or port != PORT) and not server_index:
         return b"RETRY_PRIMARY"+ b'|--|'+ pickle.dumps(replica_nodes), 'reply'
 
+    old_value = None
+    new_version = None
+
     with db_lock:
         conn = db_pool.get_connection()
         try:
             cursor = conn.cursor()
             cursor.execute("SELECT version,value FROM kvstore WHERE key = ?", (key,))
             row = cursor.fetchone()
-            version = row[0] + 1 if row else 1
-            cursor.execute("INSERT OR REPLACE INTO kvstore (key, value, version, key_hash) VALUES (?, ?, ?, ?)", (key, value, version, str(key_hash)))
+            new_version = int(row[0].rpartition('-')[0]) + 1 if row else 1
+            new_version = str(new_version) + '-' + str(time.time())
+            cursor.execute("INSERT OR REPLACE INTO kvstore (key, value, version, key_hash) VALUES (?, ?, ?, ?)", (key, value, new_version, str(key_hash)))
             conn.commit()
 
-            propagate_key(key,value,version, replica_nodes)
-
             if row:
-                return row[1], 'old_value'
+                old_value = row[1]
+
+        except Exception:
+            pass
         finally:
             db_pool.return_connection(conn)
+        
+    servers = deduplicate_nodes(replica_nodes)
+    if (HOST, PORT) in servers:
+        servers.remove((HOST, PORT))
 
-        return None, 'INSERTED'
+    propagate_key(key,value,new_version, servers)
+
+    if old_value:
+        return old_value, 'old_value'
+
+    return None, 'INSERTED'
 
 '''
 check the hash of the key, identify who owns the key and redirect
@@ -213,14 +237,81 @@ def get_value(key, server_index):
     if not server_index and (primary_host != HOST or primary_port != PORT):
         return b"RETRY_PRIMARY"+ b'|--|'+ pickle.dumps(replica_nodes), 'reply'
     
+    #either primary or supposed primary is handling
+    #call replicas to read their values
+    def get_value_from_replica(host, port):
+
+        try:
+            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as conn:
+                conn.connect((host, port))
+                # Send request for the value
+                request_payload = b"GET_LOCAL_VALUE"  + f'{key}'.encode('utf-8')
+                conn.sendall(request_payload)
+                # Receive the response
+                response = conn.recv(1024).decode('utf-8')
+                messages = response.split()
+                if messages[0]== 'KEY_NOT_FOUND':
+                    return (None, None)
+                return (messages[1], messages[2])  # Return the replica and decoded response
+        except Exception as e:
+            return (None, None)
+    
     conn = db_pool.get_connection()
+    local_result = None
     try:
         cursor = conn.cursor()
-        cursor.execute("SELECT value FROM kvstore WHERE key = ?", (key,))
+        cursor.execute("SELECT value, version FROM kvstore WHERE key = ?", (key,))
         row = cursor.fetchone()
-        return row[0] if row else None,'value'
+        local_result = row
     finally:
         db_pool.return_connection(conn)
+    
+    servers = deduplicate_nodes(replica_nodes)
+
+    if (HOST, PORT) in servers:
+        servers.remove((HOST, PORT))
+
+    curr_value = None if not local_result else local_result[0]
+    curr_version = None if not local_result else local_result[1]
+    
+    with concurrent.futures.ThreadPoolExecutor() as executor:
+        future_to_replica = {executor.submit(get_value_from_replica, replica[0], replica[1]): replica for replica in replica_nodes}
+
+        
+        for future in concurrent.futures.as_completed(future_to_replica):
+            replica = future_to_replica[future]
+            try:
+                value, version = future.result()
+                
+                if not value or version:
+                    continue
+                
+                if not compare_versions(curr_version, version):
+                    curr_version = version
+                    curr_value = value
+
+            except Exception as e:
+                continue
+    if curr_value:
+        return curr_value, 'value'
+    return None, 'value'
+
+def compare_versions(version1, version2):
+    if not version1:
+        return False
+    
+    v1_version, v1_timestamp = version1.split('-')
+    v2_version, v2_timestamp = version2.split('-')
+    if v1_timestamp > v2_timestamp:
+        return True
+    elif v1_timestamp == v2_timestamp:
+        return v1_version >= v2_version
+    return False
+
+def deduplicate_nodes(replicas):
+    servers = [(extract_server_url(replica)) for replica in replicas]
+
+    return list(set(servers))
 
 def replicate_key(key, value, version):
     key_hash = hash(key)
@@ -229,16 +320,35 @@ def replicate_key(key, value, version):
         conn = db_pool.get_connection()
         try:
             cursor = conn.cursor()
-            cursor.execute("SELECT version,value FROM kvstore WHERE key = ?", (key,))
-            row = cursor.fetchone()
-            if row and version <= row[0]:
-                print(f'Warning: replicating to older version for key, {key}')
+            # cursor.execute("SELECT version,value FROM kvstore WHERE key = ?", (key,))
+            # row = cursor.fetchone()
+            # if row and version <= row[0]:
+            #     print(f'Warning: replicating to older version for key, {key}')
             cursor.execute("INSERT OR REPLACE INTO kvstore (key, value, version, key_hash) VALUES (?, ?, ?, ?)", (key, value, version, str(key_hash)))
             conn.commit()
 
         finally:
             db_pool.return_connection(conn)
     return 0
+
+'''
+def get_local_value(): 
+For the sake of consensus no validation returns the bersion and value it has
+else None, None
+'''
+def get_local_value(key):
+    with db_lock:
+        conn = db_pool.get_connection()
+        try:
+            cursor = conn.cursor()
+            cursor.execute("SELECT value, version FROM kvstore WHERE key = ?", (key,))
+            row = cursor.fetchone()
+
+            if row:
+                return (row[0], row[1])
+        finally:
+            db_pool.return_connection(conn)
+    return (None, None)
 
 
 def get_versioned_data():
@@ -355,6 +465,13 @@ def handle_client(conn, addr):
                     else:
                         conn.sendall(b"KEY_NOT_FOUND")
 
+            elif command[0] == "GET_LOCAL_VALUE":
+                value, version = get_local_value(command[1])
+                if value:
+                    conn.sendall(f'VALUE_VERSION {value} {version}'.encode('utf-8'))
+                else:
+                    conn.sendall(b"KEY_NOT_FOUND")
+                break
             elif command[0] == "PUT":
                 key = command[1]
                 value = command[2]
