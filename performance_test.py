@@ -6,8 +6,11 @@ import matplotlib.pyplot as plt
 from collections import defaultdict
 import random
 import subprocess
+import matplotlib.ticker as mticker
+from prettytable import PrettyTable
 
-config_file = "easycheckservfile.txt"
+
+config_file = "servfile.txt"
 # lock plt
 lock = threading.Lock()
 from kvstore_client_V2 import kv739_init, kv739_shutdown, kv739_put, kv739_get
@@ -38,12 +41,12 @@ def handle_keyboard_interrupt(signum, frame):
 def performance_test_with_different_instances(client_id,hot_key_percent, hot_key_access_percent):
     global put_total_time, get_total_time  
 
-    total_keys = 30  
+    total_keys = 30 
     num_hot_keys = int(total_keys * hot_key_percent)  # count hot_key_num
     hot_keys = set(random.sample(range(total_keys), num_hot_keys))  
 
     # instances num + 10 every time
-    for i in range(100, num_instances + 1, 10):
+    for i in range(num_instances, num_instances + 1, 10):
         # temp configuration file name, add instance information when increasing
         temp_config_file = f"configure_temp_instancenum_{i}.txt"  
 
@@ -141,8 +144,8 @@ if __name__ == "__main__":
                 with open(temp_config_file, 'a') as tgt:
                     tgt.writelines(selected_lines)
         
-        hot_key_percent = 0.1  # hotkey_percent
-        hot_key_access_percent = 0.9  # hotkey_access_percent
+        hot_key_percent = 0.3  # hotkey_percent
+        hot_key_access_percent = 0.7  # hotkey_access_percent
 
         
         for i in range(10, num_instances + 1, 10):
@@ -201,7 +204,23 @@ if __name__ == "__main__":
         plt.xlabel("Clients count")
         plt.ylabel("Throughput(ops/s)")
 
-        plt.savefig('performance_output_plot.png')
+        # 设置第二个子图的纵轴格式
+        ax2 = plt.gca()
+        ax2.yaxis.set_major_formatter(mticker.ScalarFormatter(useOffset=False, useMathText=False))
+        ax2.yaxis.get_major_formatter().set_scientific(False)
+
+        plt.savefig('performance_output_plot3.png')
         plt.show()
+
+        table = PrettyTable()
+
+        table.field_names = ["Server nodes", "1", "5", "10", "20", "50", "100"]
+
+        table.add_row(["put latency(ms)"] + ["{:.3f}".format(rate) for rate in put_latency])
+        table.add_row(["get latency(ms)"] + ["{:.3f}".format(rate) for rate in get_latency])
+        table.add_row(["put throughput(ops/s)"] + ["{:.3f}".format(rate) for rate in put_throughput])
+        table.add_row(["get throughput(ops/s)"] + ["{:.3f}".format(rate) for rate in get_throughput])
+
+        print(table)
     except Exception as e:
         handle_keyboard_interrupt(None, None)

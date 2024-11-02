@@ -5,6 +5,7 @@ import threading
 import matplotlib.pyplot as plt
 from collections import defaultdict
 import subprocess
+from prettytable import PrettyTable
 
 config_file = "easycheckservfile.txt"
 # lock plt
@@ -51,7 +52,7 @@ def consistency_test_with_different_instances(client_id,results):
         successful_gets = 0
         
         # test 1000 get and put
-        for j in range(30):
+        for j in range(100):
             key = f"key_{client_id}_{i}_{j}"
             value = f"value_{client_id}_{i}_{j}"
             old_value = " " * 2049 
@@ -79,7 +80,7 @@ def consistency_test_with_different_instances(client_id,results):
             else:
                 print(f"in consistency happen: [Client {client_id}] GET failed for key: {key}, expected value: {value}, get value: {get_value}")
 
-        print(f"instance number:{i}, successful PUTs rate: {successful_puts}/30, successful GETs rate: {successful_gets}/30.")
+        print(f"instance number:{i}, successful PUTs rate: {successful_puts}/100, successful GETs rate: {successful_gets}/100.")
 
         # save results to list
         with lock:
@@ -109,7 +110,7 @@ def multi_client_test(num_clients):
     sum = 0
     for r in results:
         sum += r
-    success_rate_without_inconsistency.append(sum / num_clients / 30 * 100)
+    success_rate_without_inconsistency.append(sum / num_clients / 100 * 100)
 
     # todo draw 3d points
 if __name__ == "__main__":
@@ -171,10 +172,17 @@ if __name__ == "__main__":
         plt.figure(figsize=(10, 6))
         plt.xlabel('Clients Count')
         plt.ylabel('Sucess Rate Without Inconsistency(%)')
-        plt.plot(clients_count, success_rate_without_inconsistency, 'b-o', label="successful rate without inconsistency")
+        plt.plot(clients_count, success_rate_without_inconsistency[::-1], 'b-o', label="successful rate without inconsistency")
         plt.legend()
         plt.savefig('consistency_output_plot.png')
-        print(success_rate_without_inconsistency)
         plt.show()
+
+        table = PrettyTable()
+
+        table.field_names = ["Clients Number", "1", "5", "10", "20", "50", "100"]
+
+        table.add_row(["successful rate without inconsistency(%)"] + ["{:.1f}".format(rate) for rate in success_rate_without_inconsistency[::-1]])
+
+        print(table)
     except Exception as e:
         handle_keyboard_interrupt(None, None)
