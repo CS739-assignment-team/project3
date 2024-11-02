@@ -89,14 +89,14 @@ def is_valid_key(key):
 def is_valid_value(value):
     return len(value) <= 2048 and all(c in string.printable for c in value)
 
-def share_data(key, value, version, node):
-    host,port = extract_server_url(node)
+def share_data(key, value, version, host, port):
+
     # print(f'current host {HOST} and  port {PORT}')
     # print(f'replicating host {host} port {port}')
     if host == -1:
         return -1
-    if host == HOST and port == PORT:
-        return 0
+    # if host == HOST and port == PORT:
+    #     return 0
     try:
         conn = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         conn.connect((host, port))
@@ -114,7 +114,7 @@ def share_data(key, value, version, node):
         conn.sendall(b'SHUTDOWN')
         # print('sent shotdown')
     except Exception as e:
-        print(f"Connection error to {node}: {e}")
+        print(f"Connection error to {host}:{port}: {e}")
         return -1
     finally:
         conn.close()
@@ -122,8 +122,8 @@ def share_data(key, value, version, node):
         
 def propagate_key(key, value, version, backup_nodes):
     threads = []
-    for node in backup_nodes:
-        thread = threading.Thread(target=share_data, args=(key, value, version, node), daemon=True)
+    for host, port in backup_nodes:
+        thread = threading.Thread(target=share_data, args=(key, value, version, host, port), daemon=True)
         thread.start()
         threads.append(thread)
     
@@ -213,8 +213,12 @@ def put_value(key, value, server_index):
             pass
         finally:
             db_pool.return_connection(conn)
-            
-    propagate_key(key,value,new_version, replica_nodes)
+        
+    servers = deduplicate_nodes(replica_nodes)
+    if (HOST, PORT) in servers:
+        servers.remove((HOST, PORT))
+
+    propagate_key(key,value,new_version, servers)
 
     if old_value:
         return old_value, 'old_value'
